@@ -1,0 +1,3 @@
+# Keep Windows batch files byte-for-byte (CRLF), also for raw downloads.
+*.bat -text
+*.cmd -text
