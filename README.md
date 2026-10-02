@@ -11,6 +11,10 @@ reasons are [listed below](#deliberately-not-included).
 The script writes no logs, exports, backups or restore points. It does not touch
 network settings, power plans or `powercfg`, temp files, or disk cleanup.
 
+For ping, jitter, lag spikes and packet loss, use the companion script
+[`NetTune.bat`](NetTune.md). It changes only network settings, so the two don't
+overlap.
+
 ## Usage
 
 1. Double-click `GameTune.bat`. It asks for administrator rights.
