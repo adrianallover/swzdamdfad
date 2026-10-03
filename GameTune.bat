@@ -7,14 +7,17 @@ rem
 rem  Goal: better 0.1 / 1 percent lows, average FPS and frametime consistency
 rem  on Windows 10 (version 2004 or newer) and Windows 11.
 rem
-rem  Only changes that current community benchmarking shows to have a real,
-rem  measurable effect are applied. Hardware, installed components and the
-rem  Windows build are detected at runtime and each step adapts to them.
+rem  Only changes that current community benchmarking or vendor documentation
+rem  shows to have a real, measurable effect are applied. Hardware, monitors,
+rem  graphics drivers, installed games and the Windows build are detected at
+rem  runtime and each step adapts to them. At the end it lists the hardware
+rem  and setup problems that only you can fix, biggest gain first.
 rem
-rem  Writes no logs, exports, backups or restore points. Does not touch
-rem  network settings, power plans / powercfg, temp files or disk cleanup.
-rem  README.md explains every change, the evidence behind it and how to
-rem  undo it.
+rem  Writes no logs, exports, backups or restore points, and deletes no
+rem  files. Does not touch network settings or power plans / powercfg. Its
+rem  only disk cleanup change keeps the DirectX shader cache out of the
+rem  automatic cleanup. README.md explains every change, the evidence behind
+rem  it and how to undo it.
 rem ==========================================================================
 
 rem ---- Options -------------------------------------------------------------
@@ -38,6 +41,27 @@ rem      Auto HDR costs 2 to 3 percent of GPU time while it is active.
 rem  POWERTHROTTLING_MODE  auto, off or keep
 rem      Power throttling of background processes. auto turns it off on
 rem      desktops with hybrid P-core and E-core CPUs, and keeps it on laptops.
+rem  REFRESH_MODE          max or keep
+rem      Sets each monitor to the highest refresh rate it offers at its
+rem      current resolution. You confirm the new rate; without an answer
+rem      within 15 seconds it switches back by itself.
+rem  VRR_MODE              on or keep
+rem      Lets DX10 and DX11 games without their own support use G-SYNC or
+rem      FreeSync, so frame rate drops below the refresh rate do not judder.
+rem  GPU_PREFERENCE_MODE   auto or keep
+rem      On PCs with two GPUs, sets every installed game to the
+rem      high-performance GPU in Windows graphics settings.
+rem  NVIDIA_MODE           fix or keep
+rem      Sets NVIDIA Control Panel settings that cost FPS or cause stutter
+rem      back to NVIDIA's defaults: shader cache off or smaller than the
+rem      driver default, threaded optimization forced off, integrated
+rem      graphics preferred.
+rem  AMD_MODE              fix or keep
+rem      Sets the AMD Software shader cache back to its default, AMD
+rem      optimized, when it was turned off.
+rem  SHADER_CACHE_MODE     protect or keep
+rem      Stops Windows' automatic disk cleanup from deleting the DirectX
+rem      shader cache, after which games compile shaders again and stutter.
 rem
 rem  Off by default, because they cost security or break something:
 rem  CPU_MITIGATIONS_MODE        keep or off
@@ -56,6 +80,12 @@ set "DIAGTRACK_MODE=auto"
 set "HAGS_MODE=on"
 set "AUTOHDR_MODE=off"
 set "POWERTHROTTLING_MODE=auto"
+set "REFRESH_MODE=max"
+set "VRR_MODE=on"
+set "GPU_PREFERENCE_MODE=auto"
+set "NVIDIA_MODE=fix"
+set "AMD_MODE=fix"
+set "SHADER_CACHE_MODE=protect"
 set "CPU_MITIGATIONS_MODE=keep"
 set "DEFENDER_EXCLUSIONS_MODE=keep"
 set "STORE_APPS_BACKGROUND_MODE=keep"
@@ -76,6 +106,10 @@ set "PATH=%SYS32%;%SystemRoot%;%SYS32%\Wbem;%SYS32%\WindowsPowerShell\v1.0"
 set "PATHEXT=.COM;.EXE;.BAT;.CMD"
 set "PS=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
 if not exist "%PS%" set "PS="
+set "GT_SELF=%~f0"
+rem Loads the PowerShell section between the two marker lines at the end of
+rem this file and runs the step named in GT_STEP.
+set "GT_PSRUN=$t=[IO.File]::ReadAllText($env:GT_SELF);$m='#'+'GTPS';$i=$t.IndexOf($m);$j=$t.LastIndexOf($m);if($i -lt 0 -or $j -le $i){exit 3};& ([scriptblock]::Create($t.Substring($i,$j-$i)))"
 set "SVC=HKLM\SYSTEM\CurrentControlSet\Services"
 set "DG=HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard"
 set "DGP=HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard"
@@ -192,6 +226,14 @@ set "HAS_XBOX="
 reg query "%SVC%\GamingServices" >nul 2>&1
 if "%errorlevel%"=="0" set "HAS_XBOX=1"
 
+rem ---- NVIDIA and AMD graphics: their driver settings get their own steps --
+set "HAS_NV="
+echo %GT_GPU%| findstr /i /c:"NVIDIA" >nul
+if "%errorlevel%"=="0" set "HAS_NV=1"
+set "HAS_AMD="
+echo %GT_GPU%| findstr /i /c:"Radeon" /c:"AMD" >nul
+if "%errorlevel%"=="0" set "HAS_AMD=1"
+
 rem ---- Decisions ------------------------------------------------------------
 set "VBS_TXT=unknown"
 if "%GT_VBS%"=="0" set "VBS_TXT=off"
@@ -215,7 +257,6 @@ if /i "%POWERTHROTTLING_MODE%"=="auto" if "%GT_HYBRID%"=="1" if "%GT_BATTERY%"==
 
 set "MEM_TXT=pagefile checked"
 if %GT_RAMGB% GEQ 16 set "MEM_TXT=page combining off, pagefile checked"
-if %GT_RAMGB% GEQ 32 set "MEM_TXT=page combining and memory compression off, pagefile checked"
 
 set "OPT_TXT="
 if /i "%CPU_MITIGATIONS_MODE%"=="off" set "OPT_TXT=%OPT_TXT%, Spectre/Meltdown mitigations off"
@@ -256,7 +297,13 @@ echo   - Game Mode: on.  Game Bar background recording: off
 if /i "%HAGS_MODE%"=="on" echo   - Hardware-accelerated GPU scheduling: on
 if /i "%HAGS_MODE%"=="off" echo   - Hardware-accelerated GPU scheduling: off, for an A/B test
 if %GT_BUILD% GEQ 22621 echo   - Optimizations for windowed games: on
+if /i not "%VRR_MODE%"=="keep" echo   - Variable refresh rate for games without their own support: on
 if /i not "%AUTOHDR_MODE%"=="keep" if %GT_BUILD% GEQ 22000 echo   - Auto HDR: off
+if /i not "%REFRESH_MODE%"=="keep" echo   - Monitors: highest refresh rate, kept only when you confirm it
+if /i not "%GPU_PREFERENCE_MODE%"=="keep" echo   - Installed games: high-performance GPU, on PCs with two GPUs
+if defined HAS_NV if /i not "%NVIDIA_MODE%"=="keep" echo   - NVIDIA settings that cost FPS or cause stutter: back to defaults
+if defined HAS_AMD if /i not "%AMD_MODE%"=="keep" echo   - AMD shader cache: back on, if it was turned off
+if /i not "%SHADER_CACHE_MODE%"=="keep" echo   - DirectX shader cache: kept out of automatic disk cleanup
 echo   - Fault Tolerant Heap: off, per-game list cleared
 echo   - Memory: %MEM_TXT%
 echo   - Forced HPET clock: removed, if present
@@ -268,6 +315,7 @@ if not defined DO_DIAG echo   - Windows telemetry: collectors and tasks off. Dia
 echo   - NVIDIA, AMD, Intel and Office telemetry: off where installed
 echo   - SSD TRIM: checked
 echo   - Optional extras: %OPT_TXT%
+echo   - Last: a list of hardware and setup problems only you can fix
 echo.
 echo  A restart is needed afterwards. README.md shows how to undo each change.
 echo.
@@ -275,12 +323,18 @@ choice /c YN /n /m "  Apply these changes now? [Y/N] "
 if errorlevel 2 goto :cancelled
 
 set "STEPN=0"
-set "STEPS=17"
+set "STEPS=24"
 call :step_vbs
 call :step_gamebar
 call :step_hags
 call :step_windowed
+call :step_vrr
 call :step_autohdr
+call :step_refresh
+call :step_gpupref
+call :step_nvidia
+call :step_amd
+call :step_shadercache
 call :step_fth
 call :step_memory
 call :step_hpet
@@ -293,6 +347,7 @@ call :step_trim
 call :step_mitigations
 call :step_defender
 call :step_hypervisor
+call :step_findings
 
 echo.
 echo  ==============================================================
@@ -432,6 +487,24 @@ echo   [ OK ] Turned on: windowed and borderless DX10/DX11 games use the flip mo
 exit /b 0
 
 
+:step_vrr
+rem Windows' variable refresh rate setting for games: DX11 games that do not
+rem support VRR themselves then present in a way G-SYNC and FreeSync monitors
+rem can follow. Without VRR, a frame rate below the refresh rate is shown
+rem with judder or tearing. Only has an effect on a VRR monitor with G-SYNC
+rem or FreeSync turned on in the graphics driver.
+call :hdr "Variable refresh rate for games without their own support"
+if /i "%VRR_MODE%"=="keep" echo   [SKIP] VRR_MODE is set to keep.& exit /b 0
+call :dx_read
+call :dx_get VRROptimizeEnable V1
+if "%V1%"=="1" echo   [ OK ] Already on.& exit /b 0
+call :dx_set VRROptimizeEnable 1
+if not "%errorlevel%"=="0" echo   [FAIL] Could not write DirectXUserGlobalSettings.& exit /b 0
+echo   [ OK ] Turned on: DX11 games without VRR support can use G-SYNC or FreeSync too.
+echo          It needs a VRR monitor with G-SYNC or FreeSync turned on in the NVIDIA or AMD software.
+exit /b 0
+
+
 :step_autohdr
 rem Auto HDR runs a tone-mapping pass over every frame of SDR games while HDR
 rem is on, about 2 to 3 percent of GPU time. Bit 0 of AutoHDREnable is the
@@ -448,6 +521,90 @@ set /a "AH=AH - AHB"
 call :dx_set AutoHDREnable %AH%
 if not "%errorlevel%"=="0" echo   [FAIL] Could not write DirectXUserGlobalSettings.& exit /b 0
 echo   [ OK ] Turned off. It only ever ran with HDR on; Settings, Display, HDR turns it back on.
+exit /b 0
+
+
+:step_refresh
+rem Windows often leaves a new monitor at 60 Hz, and drivers can reset it
+rem after a cable or driver change. A frame cap or V-Sync tied to the refresh
+rem rate then holds games at 60 FPS, and each frame reaches the screen later.
+rem The new rate is kept only when you confirm it within 15 seconds.
+call :hdr "Monitor refresh rate"
+if /i "%REFRESH_MODE%"=="keep" echo   [SKIP] REFRESH_MODE is set to keep.& exit /b 0
+if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
+call :ps refresh
+exit /b 0
+
+
+:step_gpupref
+rem On a PC with two GPUs, a game the graphics driver does not recognise can
+rem start on the integrated GPU at a fraction of the frame rate. The
+rem per-program choice in Windows graphics settings takes precedence over the
+rem NVIDIA and AMD ones, so every installed game is set to the
+rem high-performance GPU there. A program set to power saving is kept.
+call :hdr "Installed games on the high-performance GPU"
+if /i "%GPU_PREFERENCE_MODE%"=="keep" echo   [SKIP] GPU_PREFERENCE_MODE is set to keep.& exit /b 0
+if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
+call :ps gpupref
+exit /b 0
+
+
+:step_nvidia
+rem NVIDIA Control Panel settings in the global profile that old tweak guides
+rem change and that cost FPS or cause stutter: shader cache off or smaller
+rem than 4 GB, threaded optimization forced off, integrated graphics
+rem preferred. Each goes back to NVIDIA's default; game profiles are kept.
+call :hdr "NVIDIA driver settings"
+if /i "%NVIDIA_MODE%"=="keep" echo   [SKIP] NVIDIA_MODE is set to keep.& exit /b 0
+if not defined HAS_NV echo   [SKIP] No NVIDIA graphics card.& exit /b 0
+if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
+call :ps nvidia
+exit /b 0
+
+
+:step_amd
+rem AMD Software keeps its global graphics settings in the display adapter's
+rem registry key. A shader cache turned off makes every game compile its
+rem shaders again at each start, which stutters, so it goes back to the
+rem default, AMD optimized. Nothing else in AMD Software is changed.
+call :hdr "AMD driver settings"
+if /i "%AMD_MODE%"=="keep" echo   [SKIP] AMD_MODE is set to keep.& exit /b 0
+if not defined HAS_AMD echo   [SKIP] No AMD Radeon graphics.& exit /b 0
+if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
+call :ps amd
+exit /b 0
+
+
+:step_shadercache
+rem The DirectX shader cache holds compiled shaders, so games skip compiling
+rem them at the next start. Windows' automatic cleanup, which runs when a
+rem drive gets low on space, may delete it, and games then stutter again
+rem while they recompile. The cleanup reads the Autorun value of each handler
+rem in both the 64-bit and the 32-bit registry view; 0 in both leaves the
+rem cache out of it. Disk Cleanup can still clear it by hand.
+call :hdr "DirectX shader cache"
+if /i "%SHADER_CACHE_MODE%"=="keep" echo   [SKIP] SHADER_CACHE_MODE is set to keep.& exit /b 0
+set "SC_N=0"
+set "SC_SET=0"
+set "SC_FAIL="
+for %%K in ("HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\D3D Shader Cache" "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\D3D Shader Cache") do call :sc_key %%K
+if "%SC_N%"=="0" echo   [SKIP] This Windows has no automatic cleanup for it.& exit /b 0
+if defined SC_FAIL echo   [FAIL] Could not write the cleanup setting.& exit /b 0
+if "%SC_SET%"=="0" echo   [ OK ] Already kept out of automatic disk cleanup.& exit /b 0
+echo   [ OK ] Kept out of automatic disk cleanup: games keep their compiled shaders instead of
+echo          compiling them again, with stutter, after Windows frees up space.
+exit /b 0
+
+:sc_key
+rem sc_key "key" - sets Autorun to 0 for one cleanup handler, if it exists
+reg query "%~1" >nul 2>&1
+if not "%errorlevel%"=="0" exit /b 0
+set /a SC_N+=1
+call :getdw "%~1" Autorun V1
+if "%V1%"=="0" exit /b 0
+reg add "%~1" /v Autorun /t REG_DWORD /d 0 /f >nul 2>&1
+if not "%errorlevel%"=="0" set "SC_FAIL=1"& exit /b 0
+set /a SC_SET+=1
 exit /b 0
 
 
@@ -475,38 +632,30 @@ exit /b 0
 :step_memory
 rem Page combining periodically scans RAM for identical pages and can hold a
 rem core at 100 percent for seconds; with 16 GB or more the memory it saves is
-rem not worth that. Memory compression spends CPU time compressing pages that
-rem fit in RAM anyway once there are 32 GB. A disabled pagefile, left over
-rem from old tweak guides, makes games crash or stutter when the commit limit
-rem runs out, so it is set back to Windows-managed. A custom pagefile is kept.
+rem not worth that. Memory compression stays on: when memory runs short it is
+rem faster than paging to disk, and benchmarks show no consistent gain from
+rem turning it off. A disabled pagefile, left over from old tweak guides,
+rem makes games crash or stutter when the commit limit runs out, so it is set
+rem back to Windows-managed. A custom pagefile is kept.
 call :hdr "Memory manager"
 if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
 set "GT_PCW=0"
-set "GT_MCW=0"
 if %GT_RAMGB% GEQ 16 set "GT_PCW=1"
-if %GT_RAMGB% GEQ 32 set "GT_MCW=1"
-set "PC=" & set "MC=" & set "PF="
+set "PC=" & set "PF="
 set "Q=$ErrorActionPreference='SilentlyContinue';"
 set "Q=%Q%$sm=(Get-Service SysMain).Status -eq 'Running';"
 set "Q=%Q%if($sm){$a=Get-MMAgent};"
 set "Q=%Q%if($env:GT_PCW -eq '1'){if(-not $sm){'PC=NOSYSMAIN'}elseif(-not $a){'PC=FAIL'}elseif(-not $a.PageCombining){'PC=ALREADY'}else{try{Disable-MMAgent -PageCombining -ErrorAction Stop;'PC=DONE'}catch{'PC=FAIL'}}};"
-set "Q=%Q%if($env:GT_MCW -eq '1'){if(-not $sm){'MC=NOSYSMAIN'}elseif(-not $a){'MC=FAIL'}elseif(-not $a.MemoryCompression){'MC=ALREADY'}else{try{Disable-MMAgent -MemoryCompression -ErrorAction Stop;'MC=DONE'}catch{'MC=FAIL'}}};"
 set "Q=%Q%$cs=Get-CimInstance Win32_ComputerSystem;"
 set "Q=%Q%if(-not $cs){'PF=FAIL'}elseif($cs.AutomaticManagedPagefile){'PF=AUTO'}elseif(@(Get-CimInstance Win32_PageFileSetting).Count){'PF=CUSTOM'}else{try{Set-CimInstance -InputObject $cs -Property @{AutomaticManagedPagefile=$true} -ErrorAction Stop;'PF=FIXED'}catch{'PF=FAIL'}}"
-for /f "usebackq tokens=1,* delims==" %%A in (`%PS% -NoProfile -NonInteractive -Command "%Q%" 2^>nul ^| findstr /b /c:"PC=" /c:"MC=" /c:"PF="`) do set "%%A=%%B"
-if "%GT_RAMGB%"=="0" echo   [SKIP] Page combining and memory compression: installed RAM size unknown.& goto :mem_pagefile
+for /f "usebackq tokens=1,* delims==" %%A in (`%PS% -NoProfile -NonInteractive -Command "%Q%" 2^>nul ^| findstr /b /c:"PC=" /c:"PF="`) do set "%%A=%%B"
+if "%GT_RAMGB%"=="0" echo   [SKIP] Page combining: installed RAM size unknown.& goto :mem_pagefile
 if "%GT_PCW%"=="0" echo   [SKIP] Page combining: kept on, because it saves useful memory below 16 GB.
 if "%PC%"=="DONE" echo   [ OK ] Page combining: turned off.
 if "%PC%"=="ALREADY" echo   [ OK ] Page combining: already off.
 if "%PC%"=="NOSYSMAIN" echo   [SKIP] Page combining: not active, because the SysMain service is not running.
 if "%PC%"=="FAIL" echo   [FAIL] Page combining: could not change the setting.
 if "%GT_PCW%"=="1" if not defined PC echo   [FAIL] Page combining: could not query the memory manager.
-if "%GT_MCW%"=="0" echo   [SKIP] Memory compression: kept on, because below 32 GB it prevents paging.
-if "%MC%"=="DONE" echo   [ OK ] Memory compression: turned off.
-if "%MC%"=="ALREADY" echo   [ OK ] Memory compression: already off.
-if "%MC%"=="NOSYSMAIN" echo   [SKIP] Memory compression: not active, because the SysMain service is not running.
-if "%MC%"=="FAIL" echo   [FAIL] Memory compression: could not change the setting.
-if "%GT_MCW%"=="1" if not defined MC echo   [FAIL] Memory compression: could not query the memory manager.
 :mem_pagefile
 if "%PF%"=="AUTO" echo   [ OK ] Pagefile: managed by Windows.
 if "%PF%"=="CUSTOM" echo   [ OK ] Pagefile: custom size kept.
@@ -780,6 +929,15 @@ echo          bcdedit /set hypervisorlaunchtype auto
 exit /b 0
 
 
+:step_findings
+rem Problems that cost FPS or 1 percent lows and that no script can fix:
+rem BIOS settings, memory slots, cables, drives and running software.
+call :hdr "Hardware and setup: what only you can change"
+if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
+call :ps findings
+exit /b 0
+
+
 rem ==========================================================================
 rem  Helpers and exits
 rem ==========================================================================
@@ -821,6 +979,13 @@ set /a VSVC+=1
 sc stop "%~1" >nul 2>&1
 sc config "%~1" start= disabled >nul 2>&1
 if "%errorlevel%"=="0" (echo   [ OK ] Service off: %~2) else (echo   [FAIL] Could not disable service: %~2)
+exit /b 0
+
+:ps
+rem ps step - runs one step of the PowerShell section at the end of this file
+set "GT_STEP=%~1"
+"%PS%" -NoProfile -NonInteractive -Command "%GT_PSRUN%"
+if "%errorlevel%"=="3" echo   [FAIL] The PowerShell section of this file is missing or damaged.
 exit /b 0
 
 rem DirectXUserGlobalSettings holds several "Key=Value;" entries, such as VRR,
@@ -890,3 +1055,1329 @@ echo  Cancelled. Nothing was changed.
 echo.
 pause
 exit /b 0
+
+rem ==========================================================================
+rem  PowerShell section. Everything below runs only through the ps helper.
+rem ==========================================================================
+#GTPS
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+
+function Say([string]$t)  { [Console]::Out.WriteLine($t) }
+function Ok([string]$t)   { Say ('  [ OK ] ' + $t) }
+function Skip([string]$t) { Say ('  [SKIP] ' + $t) }
+function Info([string]$t) { Say ('  [INFO] ' + $t) }
+function Warn([string]$t) { Say ('  [WARN] ' + $t) }
+function Fail([string]$t) { Say ('  [FAIL] ' + $t) }
+function More([string]$t) { Say ('         ' + $t) }
+
+# ---- Native code -----------------------------------------------------------
+# Monitor modes, graphics adapters and NVIDIA driver settings are reached
+# through Windows and driver APIs; this C# is compiled when a step needs it.
+$script:NativeCs = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+namespace GameTune
+{
+    public sealed class DisplayInfo
+    {
+        public string Device;
+        public string Adapter;
+        public bool Primary;
+        public int Width;
+        public int Height;
+        public int Bits;
+        public int Hz;
+        public int MaxHz;
+        public string MonitorPath;
+    }
+
+    // Monitors attached to the desktop, the GPU that drives each one, and the
+    // highest refresh rate each offers at its current resolution and colour
+    // depth (interlaced modes left out). Apply switches the refresh rate.
+    public static class Displays
+    {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DisplayDevice
+        {
+            public int cb;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+            public int StateFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DevMode
+        {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+            public ushort dmSpecVersion;
+            public ushort dmDriverVersion;
+            public ushort dmSize;
+            public ushort dmDriverExtra;
+            public uint dmFields;
+            public int dmPositionX;
+            public int dmPositionY;
+            public uint dmDisplayOrientation;
+            public uint dmDisplayFixedOutput;
+            public short dmColor;
+            public short dmDuplex;
+            public short dmYResolution;
+            public short dmTTOption;
+            public short dmCollate;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+            public ushort dmLogPixels;
+            public uint dmBitsPerPel;
+            public uint dmPelsWidth;
+            public uint dmPelsHeight;
+            public uint dmDisplayFlags;
+            public uint dmDisplayFrequency;
+            public uint dmICMMethod;
+            public uint dmICMIntent;
+            public uint dmMediaType;
+            public uint dmDitherType;
+            public uint dmReserved1;
+            public uint dmReserved2;
+            public uint dmPanningWidth;
+            public uint dmPanningHeight;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern bool EnumDisplayDevicesW(string device, uint index, ref DisplayDevice dd, uint flags);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern bool EnumDisplaySettingsW(string device, int mode, ref DevMode dm);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int ChangeDisplaySettingsExW(string device, ref DevMode dm, IntPtr hwnd, uint flags, IntPtr param);
+
+        const uint Interlaced = 2;
+        const uint CdsUpdateRegistry = 1;
+        const uint CdsTest = 2;
+        // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
+        const uint ModeFields = 0x00040000 | 0x00080000 | 0x00100000 | 0x00400000;
+
+        static DevMode NewMode()
+        {
+            DevMode m = new DevMode();
+            m.dmSize = (ushort)Marshal.SizeOf(typeof(DevMode));
+            return m;
+        }
+
+        static bool Same(DevMode a, DevMode b)
+        {
+            return a.dmPelsWidth == b.dmPelsWidth && a.dmPelsHeight == b.dmPelsHeight && a.dmBitsPerPel == b.dmBitsPerPel;
+        }
+
+        public static DisplayInfo[] List()
+        {
+            List<DisplayInfo> list = new List<DisplayInfo>();
+            try
+            {
+                for (uint i = 0; i < 32; i++)
+                {
+                    DisplayDevice dd = new DisplayDevice();
+                    dd.cb = Marshal.SizeOf(typeof(DisplayDevice));
+                    if (!EnumDisplayDevicesW(null, i, ref dd, 0)) break;
+                    if ((dd.StateFlags & 1) == 0) continue;
+                    DevMode cur = NewMode();
+                    if (!EnumDisplaySettingsW(dd.DeviceName, -1, ref cur)) continue;
+                    DisplayInfo d = new DisplayInfo();
+                    d.Device = dd.DeviceName;
+                    d.Adapter = (dd.DeviceString ?? "").Trim();
+                    d.Primary = (dd.StateFlags & 4) != 0;
+                    d.Width = (int)cur.dmPelsWidth;
+                    d.Height = (int)cur.dmPelsHeight;
+                    d.Bits = (int)cur.dmBitsPerPel;
+                    d.Hz = (int)cur.dmDisplayFrequency;
+                    d.MaxHz = d.Hz;
+                    // The monitor on this output; with EDD_GET_DEVICE_INTERFACE_NAME its
+                    // DeviceID is the interface path, which names the monitor's device
+                    // instance and with it the registry key that holds its EDID.
+                    DisplayDevice mon = new DisplayDevice();
+                    mon.cb = Marshal.SizeOf(typeof(DisplayDevice));
+                    d.MonitorPath = EnumDisplayDevicesW(dd.DeviceName, 0, ref mon, 1) ? (mon.DeviceID ?? "") : "";
+                    for (int m = 0; m < 4096; m++)
+                    {
+                        DevMode dm = NewMode();
+                        if (!EnumDisplaySettingsW(dd.DeviceName, m, ref dm)) break;
+                        if (Same(dm, cur) && (dm.dmDisplayFlags & Interlaced) == 0 && (int)dm.dmDisplayFrequency > d.MaxHz)
+                            d.MaxHz = (int)dm.dmDisplayFrequency;
+                    }
+                    list.Add(d);
+                }
+            }
+            catch (Exception) { }
+            return list.ToArray();
+        }
+
+        // Switches a monitor to hz at its current resolution and colour depth.
+        // test = only ask the driver whether the mode would work. Returns the
+        // DISP_CHANGE code (0 = done, 1 = needs a restart), -100 when there is
+        // no such mode, -101 when the monitor cannot be read.
+        public static int Apply(string device, int hz, bool test)
+        {
+            try
+            {
+                DevMode cur = NewMode();
+                if (!EnumDisplaySettingsW(device, -1, ref cur)) return -101;
+                for (int m = 0; m < 4096; m++)
+                {
+                    DevMode dm = NewMode();
+                    if (!EnumDisplaySettingsW(device, m, ref dm)) break;
+                    if (!Same(dm, cur) || (dm.dmDisplayFlags & Interlaced) != 0 || (int)dm.dmDisplayFrequency != hz) continue;
+                    dm.dmFields = ModeFields;
+                    return ChangeDisplaySettingsExW(device, ref dm, IntPtr.Zero, test ? CdsTest : CdsUpdateRegistry, IntPtr.Zero);
+                }
+                return -100;
+            }
+            catch (Exception) { return -101; }
+        }
+    }
+
+    public sealed class GpuInfo
+    {
+        public string Name;
+        public uint Vendor;
+        public ulong Vram;
+        public bool Software;
+        public long Luid;
+    }
+
+    // Graphics adapters through DXGI. List gives them in the order games see
+    // them; ByPreference in the order Windows ranks them for a preference
+    // (1 = power saving, 2 = high performance), the same ranking that the
+    // "Power saving" and "High performance" choices in Windows graphics
+    // settings use. ByPreference is empty where DXGI 1.6 is missing.
+    public static class Dxgi
+    {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct Desc1
+        {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Description;
+            public uint VendorId;
+            public uint DeviceId;
+            public uint SubSysId;
+            public uint Revision;
+            public UIntPtr DedicatedVideoMemory;
+            public UIntPtr DedicatedSystemMemory;
+            public UIntPtr SharedSystemMemory;
+            public uint LuidLow;
+            public int LuidHigh;
+            public uint Flags;
+        }
+
+        // Methods before the ones used are placeholders that keep the
+        // vtable order of dxgi.h and dxgi1_6.h.
+        [ComImport, Guid("29038f61-3839-4626-91fd-086879011a05"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IDXGIAdapter1
+        {
+            void SetPrivateData();
+            void SetPrivateDataInterface();
+            void GetPrivateData();
+            void GetParent();
+            void EnumOutputs();
+            void GetDesc();
+            void CheckInterfaceSupport();
+            [PreserveSig] int GetDesc1(out Desc1 desc);
+        }
+
+        [ComImport, Guid("770aae78-f26f-4dba-a829-253c83d1b387"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IDXGIFactory1
+        {
+            void SetPrivateData();
+            void SetPrivateDataInterface();
+            void GetPrivateData();
+            void GetParent();
+            void EnumAdapters();
+            void MakeWindowAssociation();
+            void GetWindowAssociation();
+            void CreateSwapChain();
+            void CreateSoftwareAdapter();
+            [PreserveSig] int EnumAdapters1(uint index, out IDXGIAdapter1 adapter);
+        }
+
+        [ComImport, Guid("c1b6694f-ff09-44a9-b03c-77900a0a1d17"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IDXGIFactory6
+        {
+            void SetPrivateData();
+            void SetPrivateDataInterface();
+            void GetPrivateData();
+            void GetParent();
+            void EnumAdapters();
+            void MakeWindowAssociation();
+            void GetWindowAssociation();
+            void CreateSwapChain();
+            void CreateSoftwareAdapter();
+            void EnumAdapters1();
+            void IsCurrent();
+            void IsWindowedStereoEnabled();
+            void CreateSwapChainForHwnd();
+            void CreateSwapChainForCoreWindow();
+            void GetSharedResourceAdapterLuid();
+            void RegisterStereoStatusWindow();
+            void RegisterStereoStatusEvent();
+            void UnregisterStereoStatus();
+            void RegisterOcclusionStatusWindow();
+            void RegisterOcclusionStatusEvent();
+            void UnregisterOcclusionStatus();
+            void CreateSwapChainForComposition();
+            void GetCreationFlags();
+            void EnumAdapterByLuid();
+            void EnumWarpAdapter();
+            void CheckFeatureSupport();
+            [PreserveSig] int EnumAdapterByGpuPreference(uint index, uint preference, [In] ref Guid riid, [MarshalAs(UnmanagedType.Interface)] out IDXGIAdapter1 adapter);
+        }
+
+        [DllImport("dxgi.dll")]
+        static extern int CreateDXGIFactory1([In] ref Guid riid, [MarshalAs(UnmanagedType.Interface)] out object factory);
+
+        static readonly Guid FactoryId = new Guid("770aae78-f26f-4dba-a829-253c83d1b387");
+        static readonly Guid AdapterId = new Guid("29038f61-3839-4626-91fd-086879011a05");
+
+        static GpuInfo Describe(IDXGIAdapter1 a)
+        {
+            Desc1 d;
+            if (a.GetDesc1(out d) != 0) return null;
+            GpuInfo g = new GpuInfo();
+            g.Name = (d.Description ?? "").Trim();
+            g.Vendor = d.VendorId;
+            g.Vram = d.DedicatedVideoMemory.ToUInt64();
+            g.Software = (d.Flags & 2) != 0;
+            g.Luid = ((long)d.LuidHigh << 32) | d.LuidLow;
+            return g;
+        }
+
+        static object Factory()
+        {
+            Guid iid = FactoryId;
+            object f;
+            if (CreateDXGIFactory1(ref iid, out f) != 0) return null;
+            return f;
+        }
+
+        public static GpuInfo[] List()
+        {
+            List<GpuInfo> list = new List<GpuInfo>();
+            object o = null;
+            try
+            {
+                o = Factory();
+                IDXGIFactory1 f = o as IDXGIFactory1;
+                if (f == null) return list.ToArray();
+                for (uint i = 0; i < 16; i++)
+                {
+                    IDXGIAdapter1 a;
+                    if (f.EnumAdapters1(i, out a) != 0 || a == null) break;
+                    GpuInfo g = Describe(a);
+                    if (g != null) list.Add(g);
+                    Marshal.ReleaseComObject(a);
+                }
+            }
+            catch (Exception) { }
+            finally { if (o != null) Marshal.ReleaseComObject(o); }
+            return list.ToArray();
+        }
+
+        public static GpuInfo[] ByPreference(uint preference)
+        {
+            List<GpuInfo> list = new List<GpuInfo>();
+            object o = null;
+            try
+            {
+                o = Factory();
+                IDXGIFactory6 f = o as IDXGIFactory6;
+                if (f == null) return list.ToArray();
+                Guid iid = AdapterId;
+                for (uint i = 0; i < 16; i++)
+                {
+                    IDXGIAdapter1 a;
+                    if (f.EnumAdapterByGpuPreference(i, preference, ref iid, out a) != 0 || a == null) break;
+                    GpuInfo g = Describe(a);
+                    if (g != null) list.Add(g);
+                    Marshal.ReleaseComObject(a);
+                }
+            }
+            catch (Exception) { }
+            finally { if (o != null) Marshal.ReleaseComObject(o); }
+            return list.ToArray();
+        }
+    }
+
+    public sealed class NvSetting
+    {
+        public int Status;
+        public bool Found;
+        public bool Predefined;
+        public int Location;
+        public uint Value;
+    }
+
+    // NVIDIA driver settings (the NVIDIA Control Panel's global profile)
+    // through NVAPI's DRS functions. IDs and layout from NVIDIA's NVAPI SDK:
+    // NVDRS_SETTING_V1 is 12320 bytes, packed to 4, version 0x13020; the
+    // location is at offset 4108, isCurrentPredefined at 4112 and the DWORD
+    // current value at 8220.
+    public sealed class Nv
+    {
+        [DllImport("nvapi64.dll", EntryPoint = "nvapi_QueryInterface", CallingConvention = CallingConvention.Cdecl)]
+        static extern IntPtr Query64(uint id);
+        [DllImport("nvapi.dll", EntryPoint = "nvapi_QueryInterface", CallingConvention = CallingConvention.Cdecl)]
+        static extern IntPtr Query32(uint id);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int NoArgs();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int OutHandle(out IntPtr handle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int WithSession(IntPtr session);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SessionOutHandle(IntPtr session, out IntPtr handle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int GetSettingFn(IntPtr session, IntPtr profile, uint id, IntPtr setting);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int ProfileSettingFn(IntPtr session, IntPtr profile, uint id);
+
+        const int SettingSize = 12320;
+        const int SettingVersion = SettingSize | (1 << 16);
+        IntPtr session = IntPtr.Zero;
+        IntPtr profile = IntPtr.Zero;
+
+        static T Fn<T>(uint id) where T : class
+        {
+            IntPtr p = IntPtr.Size == 8 ? Query64(id) : Query32(id);
+            if (p == IntPtr.Zero) return null;
+            return (T)(object)Marshal.GetDelegateForFunctionPointer(p, typeof(T));
+        }
+
+        // 0 = ready; otherwise an NVAPI status, or -1000 when NVAPI is missing.
+        public int Open()
+        {
+            try
+            {
+                NoArgs init = Fn<NoArgs>(0x0150E828);
+                OutHandle create = Fn<OutHandle>(0x0694D52E);
+                WithSession load = Fn<WithSession>(0x375DBD6B);
+                SessionOutHandle global = Fn<SessionOutHandle>(0x617BFF9F);
+                if (init == null || create == null || load == null || global == null) return -1000;
+                int rc = init();
+                if (rc != 0) return rc;
+                rc = create(out session);
+                if (rc != 0) return rc;
+                rc = load(session);
+                if (rc != 0) return rc;
+                return global(session, out profile);
+            }
+            catch (Exception) { return -1000; }
+        }
+
+        public NvSetting Read(uint id)
+        {
+            NvSetting s = new NvSetting();
+            IntPtr buf = Marshal.AllocHGlobal(SettingSize);
+            try
+            {
+                Marshal.Copy(new byte[SettingSize], 0, buf, SettingSize);
+                Marshal.WriteInt32(buf, 0, SettingVersion);
+                GetSettingFn get = Fn<GetSettingFn>(0x73BF8338);
+                s.Status = get == null ? -1000 : get(session, profile, id, buf);
+                if (s.Status == 0)
+                {
+                    s.Found = true;
+                    s.Location = Marshal.ReadInt32(buf, 4108);
+                    s.Predefined = Marshal.ReadInt32(buf, 4112) != 0;
+                    s.Value = (uint)Marshal.ReadInt32(buf, 8220);
+                }
+            }
+            catch (Exception) { s.Status = -1000; }
+            finally { Marshal.FreeHGlobal(buf); }
+            return s;
+        }
+
+        // Puts a setting of the global profile back to NVIDIA's default.
+        public int Restore(uint id)
+        {
+            try
+            {
+                ProfileSettingFn restore = Fn<ProfileSettingFn>(0x53F0381E);
+                return restore == null ? -1000 : restore(session, profile, id);
+            }
+            catch (Exception) { return -1000; }
+        }
+
+        public int Save()
+        {
+            try
+            {
+                WithSession save = Fn<WithSession>(0xFCBC7E14);
+                return save == null ? -1000 : save(session);
+            }
+            catch (Exception) { return -1000; }
+        }
+
+        public void Close()
+        {
+            try
+            {
+                if (session != IntPtr.Zero)
+                {
+                    WithSession destroy = Fn<WithSession>(0xDAD9CFF8);
+                    if (destroy != null) destroy(session);
+                }
+            }
+            catch (Exception) { }
+            session = IntPtr.Zero;
+        }
+    }
+}
+'@
+
+function Import-Native {
+    if ('GameTune.Displays' -as [type]) { return $true }
+    try {
+        Add-Type -TypeDefinition $script:NativeCs -Language CSharp -IgnoreWarnings -WarningAction SilentlyContinue -ErrorAction Stop
+        return $true
+    } catch {
+        Fail ('The code for this step could not be compiled: ' + ([string]$_.Exception.Message).Split("`n")[0].Trim())
+        return $false
+    }
+}
+
+# ---- Helpers ---------------------------------------------------------------
+# A registry value; the comma keeps binary values in one piece.
+function Get-Reg([string]$key, [string]$name) {
+    $p = Get-ItemProperty -LiteralPath $key -Name $name
+    if ($p) { ,$p.$name }
+}
+
+# The signed-in user's registry hive, also when GameTune was elevated with a
+# different administrator account. GT_USERSID comes from the batch code.
+function Get-UserSid {
+    $sid = [string]$env:GT_USERSID
+    if ($sid -and (Test-Path -LiteralPath ('Registry::HKEY_USERS\' + $sid))) { return $sid }
+    ''
+}
+function Get-UserPath {
+    $sid = Get-UserSid
+    if ($sid) { return ('Registry::HKEY_USERS\' + $sid) }
+    'HKCU:'
+}
+# Opens a key of the signed-in user through .NET, which, unlike the registry
+# cmdlets, takes value names with wildcard characters such as [ ] literally.
+function Open-UserKey([string]$sub, [bool]$write) {
+    $sid = Get-UserSid
+    $root = [Microsoft.Win32.Registry]::CurrentUser
+    $path = $sub
+    if ($sid) { $root = [Microsoft.Win32.Registry]::Users; $path = $sid + '\' + $sub }
+    try {
+        if ($write) { return $root.CreateSubKey($path) }
+        return $root.OpenSubKey($path)
+    } catch { return $null }
+}
+# A key under HKLM through .NET, which reads and writes values with their
+# types as they are.
+function Open-MachineKey([string]$sub, [bool]$write) {
+    try { return [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($sub, $write) } catch { return $null }
+}
+
+# The adapter keys of the display class, where graphics drivers keep their
+# global settings: one subkey per adapter, named 0000, 0001 and so on.
+$script:DisplayClass = 'SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
+function Get-DisplayAdapterKeys {
+    $root = Open-MachineKey $script:DisplayClass $false
+    if (-not $root) { return @() }
+    $names = @($root.GetSubKeyNames() | Where-Object { $_ -match '^\d{4}$' })
+    $root.Close()
+    foreach ($n in $names) {
+        $k = Open-MachineKey ($script:DisplayClass + '\' + $n) $false
+        if (-not $k) { continue }
+        [pscustomobject]@{
+            Path     = $script:DisplayClass + '\' + $n
+            Provider = [string]$k.GetValue('ProviderName', '')
+            Name     = ([string]$k.GetValue('DriverDesc', '')).Trim()
+            Chill    = $k.GetValue('KMD_ChillEnabled', $null)
+        }
+        $k.Close()
+    }
+}
+
+# The NVIDIA driver branch, such as 591 for driver 591.86, from the Windows
+# driver version (32.0.15.9186); 0 when unknown.
+function Get-NvidiaBranch {
+    $vc = @(Get-CimInstance Win32_VideoController | Where-Object { [string]$_.Name -match 'NVIDIA' })[0]
+    $d = ([string]$vc.DriverVersion) -replace '\D', ''
+    if ($d.Length -lt 6) { return 0 }
+    [int]$d.Substring($d.Length - 5, 3)
+}
+
+function Format-MB([double]$mb) {
+    if ($mb -lt 1024) { return ([string][int]$mb + ' MB') }
+    '{0:0.#} GB' -f ($mb / 1024)
+}
+
+# The signed-in user's profile folder.
+function Get-UserProfile {
+    $sid = Get-UserSid
+    if ($sid) {
+        $p = [string](Get-CimInstance Win32_UserProfile -Filter ("SID='" + $sid + "'")).LocalPath
+        if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    }
+    $env:USERPROFILE
+}
+
+# Laptop or desktop, from the chassis type; the battery only decides when the
+# chassis type says neither.
+function Test-Laptop {
+    $types = @(Get-CimInstance Win32_SystemEnclosure | ForEach-Object { $_.ChassisTypes } | ForEach-Object { [int]$_ })
+    foreach ($c in $types) { if (@(8, 9, 10, 11, 14, 30, 31, 32) -contains $c) { return $true } }
+    foreach ($c in $types) { if (@(3, 4, 5, 6, 7, 13, 15, 16, 24, 35, 36) -contains $c) { return $false } }
+    [bool](Get-CimInstance Win32_Battery)
+}
+
+# The graphics adapters, ranked by Windows for high performance and for power
+# saving. Two different first entries mean a PC with two GPUs, the same choice
+# Windows graphics settings offer.
+function Get-GpuRanking {
+    $hp = @([GameTune.Dxgi]::ByPreference(2) | Where-Object { -not $_.Software })
+    $mp = @([GameTune.Dxgi]::ByPreference(1) | Where-Object { -not $_.Software })
+    $two = $hp.Count -ge 2 -and $mp.Count -ge 1 -and $hp[0].Luid -ne $mp[0].Luid
+    [pscustomobject]@{
+        Ranked = [bool]$hp.Count
+        Two    = $two
+        Fast   = $(if ($hp.Count) { $hp[0] } else { $null })
+        Saving = $(if ($two) { $mp[0] } else { $null })
+    }
+}
+
+# Name and highest vertical refresh rate a monitor reports in its EDID. The
+# interface path names the monitor's device instance, whose registry key
+# holds the EDID. MaxHz comes from the Display Range Limits descriptor (tag
+# 0xFD); bit 1 of its byte 4 adds 255 Hz for monitors above 255 Hz.
+function Read-MonitorEdid([string]$path) {
+    $r = [pscustomobject]@{ Name = ''; MaxHz = 0 }
+    if ($path -notmatch '^\\\\\?\\DISPLAY#([^#]+)#([^#]+)#') { return $r }
+    $b = Get-Reg ('HKLM:\SYSTEM\CurrentControlSet\Enum\DISPLAY\' + $Matches[1] + '\' + $Matches[2] + '\Device Parameters') 'EDID'
+    if ($b -isnot [byte[]] -or $b.Count -lt 128) { return $r }
+    for ($o = 54; $o -le 108; $o += 18) {
+        if ($b[$o] -ne 0 -or $b[$o + 1] -ne 0 -or $b[$o + 2] -ne 0) { continue }
+        if ($b[$o + 3] -eq 0xFC) {
+            $n = ''
+            for ($k = $o + 5; $k -lt $o + 18 -and $b[$k] -ne 0x0A; $k++) { if ($b[$k] -ge 32 -and $b[$k] -lt 127) { $n += [char]$b[$k] } }
+            $r.Name = $n.Trim()
+        } elseif ($b[$o + 3] -eq 0xFD) {
+            $max = [int]$b[$o + 6]
+            if ($b[$o + 4] -band 2) { $max += 255 }
+            $r.MaxHz = $max
+        }
+    }
+    $r
+}
+
+# Asks a yes/no question that answers itself with No after $sec seconds, for
+# changes that must undo themselves when nobody can see the screen. Keys
+# pressed before the question are discarded; without a console to read from,
+# the answer is No.
+function Wait-Yes([int]$sec, [string]$prompt) {
+    [Console]::Out.Write($prompt)
+    try {
+        while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }
+        $end = [DateTime]::UtcNow.AddSeconds($sec)
+        while ([DateTime]::UtcNow -lt $end) {
+            if ([Console]::KeyAvailable) {
+                $k = [string][Console]::ReadKey($true).KeyChar
+                if ($k -eq 'y') { Say 'Y'; return $true }
+                if ($k -eq 'n') { Say 'N'; return $false }
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    } catch { }
+    Say 'N'
+    $false
+}
+
+# Memory channel from the firmware's slot labels: "ChannelA-DIMM0",
+# "P0 CHANNEL A", "DIMM_A1", "DDR5_A1" and similar. $null when unlabelled.
+function Get-Channel($m) {
+    $s = ([string]$m.BankLabel + ' ' + [string]$m.DeviceLocator).ToUpper()
+    if ($s -match 'CHANNEL\s*([A-H])') { return $Matches[1] }
+    if ($s -match 'DIMM[_ ]?([A-H])[0-9]') { return $Matches[1] }
+    if ($s -match '(?:^|[^A-Z0-9])([A-H])[0-9](?:[^0-9]|$)') { return $Matches[1] }
+    $null
+}
+
+function Convert-SpeedCode([int]$c) {
+    switch ($c) { 21 { 2133 } 26 { 2666 } 29 { 2933 } 34 { 3466 } 37 { 3733 } default { $c * 100 } }
+}
+
+# The speed a memory kit is sold for, from its part number (G.Skill, Corsair,
+# Kingston FURY and HyperX, Crucial, TeamGroup, Patriot, ADATA and others).
+# 0 when the part number does not say, as with standard JEDEC modules.
+function Get-RatedSpeed([string]$pn) {
+    $p = $pn.Trim().ToUpper()
+    if (-not $p) { return 0 }
+    if ($p -match '^(KF|HX)[45](\d\d)C') { return (Convert-SpeedCode ([int]$Matches[2])) }
+    if ($p -match '^BL\d*(?:K\d+)?\d+G(\d\d)C') { return (Convert-SpeedCode ([int]$Matches[1])) }
+    if ($p -match '^CP\d+G(\d\d)C') { return (Convert-SpeedCode ([int]$Matches[1])) }
+    if ($p -match '^PV\w\d{3}G(\d{3})C') { return [int]$Matches[1] * 10 }
+    if ($p -match '^AX[45]U(\d{4})') { return [int]$Matches[1] }
+    if ($p -match '(?<!\d)(2133|2400|2666|2933|3000|3200|3333|3466|3600|3733|3800|3866|4000|4133|4266|4400|4600|4800|5200|5600|6000|6200|6400|6600|6800|7000|7200|7600|8000|8200|8400)(?!\d)') { return [int]$Matches[1] }
+    0
+}
+
+# HDD, SSD or NVMe SSD for the disk that holds a folder; '' when unknown.
+function Get-DriveKind([string]$path) {
+    if ($path -notmatch '^([A-Za-z]):') { return '' }
+    $part = @(Get-Partition -DriveLetter $Matches[1])[0]
+    if (-not $part) { return '' }
+    $pd = @(Get-PhysicalDisk | Where-Object { [string]$_.DeviceId -eq [string]$part.DiskNumber })[0]
+    if (-not $pd) { return '' }
+    $mt = [string]$pd.MediaType
+    $bus = [string]$pd.BusType
+    if ($mt -eq 'HDD') { return 'hard drive' }
+    if ($bus -eq 'NVMe') { return 'NVMe SSD' }
+    if ($mt -eq 'SSD' -and $bus -eq 'USB') { return 'SSD over USB' }
+    if ($mt -eq 'SSD') { return 'SSD' }
+    if ($bus -eq 'USB') { return 'USB drive' }
+    ''
+}
+
+# ---- Installed games -------------------------------------------------------
+# Programs in game folders that never render the game: installers, runtimes,
+# crash reporters, anti-cheat services, launchers, updaters and web helpers.
+$script:SkipExe = '^(unins.*|.*setup.*|.*install.*|vc_?redist.*|dxwebsetup|dotnet.*|ndp\d.*|oalinst|physx.*|.*prereq.*|.*crash.*|.*report.*|bugsplat.*|sentry.*|easyanticheat.*|start_protected_game|beservice.*|battleye.*|.*launcher.*|.*updater.*|.*update.*|.*patcher.*|.*helper.*|cef.*|.*webview.*|qtwebengineprocess|7z.*|jar|jarsigner|javac|javadoc|javap|jcmd|jconsole|jdb|jdeps|jfr|jhsdb|jimage|jinfo|jlink|jmap|jmod|jpackage|jps|jrunscript|jshell|jstack|jstat|jstatd|jwebserver|keytool|kinit|klist|ktab|orbd|pack200|unpack200|policytool|rmic|rmid|rmiregistry|serialver|servertool|tnameserv|jabswitch|jaccess.*|obs32|obs64|wallpaper32|wallpaper64|losslessscaling|vrserver|vrcompositor|vrmonitor)\.exe$'
+$script:SkipDir = '^(_commonredist|commonredist|redist|redists|redistributable|redistributables|directx|dxsetup|prerequisites|prereq|prereqs|__installer|_installer|installer|installers|support|easyanticheat|easyanticheat_eos|battleye|vcredist|dotnetfx|physx|thirdparty|extras|crashreportclient|crashpad|uninstall)$'
+# Steam tools that must keep the GPU they run on: Steamworks redistributables,
+# Wallpaper Engine, Lossless Scaling, SteamVR and OBS Studio.
+$script:SkipApp = @('228980', '431960', '993090', '250820', '1905180')
+
+# Program files in a game folder, down to 4 folders deep (Unreal Engine games
+# keep theirs in <Game>\Binaries\Win64), without following links. A folder
+# with more than 24 of them keeps the 24 largest.
+function Get-FolderExes([string]$root, [System.Diagnostics.Stopwatch]$clock) {
+    $found = New-Object 'System.Collections.Generic.List[IO.FileInfo]'
+    $queue = New-Object 'System.Collections.Generic.Queue[object]'
+    $queue.Enqueue(@($root, 0))
+    while ($queue.Count -and $clock.Elapsed.TotalSeconds -lt 90) {
+        $item = $queue.Dequeue()
+        $dir = New-Object IO.DirectoryInfo ([string]$item[0])
+        try {
+            foreach ($f in $dir.GetFiles('*.exe')) { if ($f.Extension -eq '.exe' -and $f.Name -notmatch $script:SkipExe) { $found.Add($f) } }
+            if ([int]$item[1] -ge 4) { continue }
+            foreach ($d in $dir.GetDirectories()) {
+                if ($d.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                if ($d.Name -match $script:SkipDir) { continue }
+                $queue.Enqueue(@($d.FullName, ([int]$item[1] + 1)))
+            }
+        } catch { }
+    }
+    @($found | Sort-Object Length -Descending | Select-Object -First 24 | ForEach-Object { $_.FullName })
+}
+
+# Every installed game's program files, from the Steam, Epic, GOG, Ubisoft,
+# EA, Battle.net, Riot and Rockstar records, Minecraft: Java Edition's Java,
+# and the programs Windows itself has recognised as games.
+function Find-Games {
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $games = New-Object 'System.Collections.Generic.List[object]'
+    $seenDir = @{}
+    $addDir = {
+        param([string]$name, [string]$dir, [string[]]$extra)
+        if (-not $dir) { return }
+        $dir = $dir.Trim().Trim('"').Replace([IO.Path]::AltDirectorySeparatorChar, [IO.Path]::DirectorySeparatorChar).TrimEnd([IO.Path]::DirectorySeparatorChar)
+        if ($dir -match '^[A-Za-z]:$' -or -not (Test-Path -LiteralPath $dir -PathType Container)) { return }
+        $k = $dir.ToLower()
+        if ($seenDir.ContainsKey($k)) { return }
+        $seenDir[$k] = 1
+        $exes = @(Get-FolderExes $dir $clock)
+        foreach ($x in $extra) { if ($x -and (Test-Path -LiteralPath $x -PathType Leaf)) { $exes += $x } }
+        $exes = @($exes | Sort-Object -Unique)
+        if ($exes.Count) { $games.Add([pscustomobject]@{ Name = $(if ($name) { $name } else { Split-Path -Leaf $dir }); Exes = $exes }) }
+    }
+    $user = Get-UserPath
+    # Steam: every library, and each game's folder from its app manifest.
+    $steam = [string](Get-Reg ($user + '\Software\Valve\Steam') 'SteamPath')
+    if (-not $steam) { $steam = [string](Get-Reg 'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam' 'InstallPath') }
+    if ($steam) {
+        $steam = $steam.Replace([IO.Path]::AltDirectorySeparatorChar, [IO.Path]::DirectorySeparatorChar)
+        $libs = @($steam)
+        $vdf = [IO.Path]::Combine($steam, 'steamapps', 'libraryfolders.vdf')
+        if (Test-Path -LiteralPath $vdf) {
+            foreach ($l in [IO.File]::ReadAllLines($vdf)) { if ($l -match '"path"\s+"([^"]+)"') { $libs += ($Matches[1] -replace '\\\\', '\') } }
+        }
+        foreach ($lib in @($libs | Sort-Object -Unique)) {
+            $apps = Join-Path $lib 'steamapps'
+            foreach ($m in @(Get-ChildItem -LiteralPath $apps -Filter 'appmanifest_*.acf')) {
+                $t = ''
+                try { $t = [IO.File]::ReadAllText($m.FullName) } catch { }
+                if ($t -notmatch '"installdir"\s+"([^"]+)"') { continue }
+                $dir = [IO.Path]::Combine($apps, 'common', $Matches[1])
+                $id = if ($t -match '"appid"\s+"(\d+)"') { $Matches[1] } else { '' }
+                if ($script:SkipApp -contains $id) { continue }
+                $name = if ($t -match '"name"\s+"([^"]+)"') { $Matches[1] } else { '' }
+                & $addDir $name $dir @()
+            }
+        }
+    }
+    # Epic Games Launcher manifests, without Unreal Engine installs.
+    $epic = [IO.Path]::Combine([string]$env:ProgramData, 'Epic', 'EpicGamesLauncher', 'Data', 'Manifests')
+    foreach ($f in @(if (Test-Path -LiteralPath $epic) { Get-ChildItem -LiteralPath $epic -Filter '*.item' })) {
+        $j = $null
+        try { $j = [IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json } catch { }
+        if (-not $j -or -not $j.InstallLocation -or $j.bIsIncompleteInstall) { continue }
+        if ([string]$j.DisplayName -match 'Unreal Engine' -or @($j.AppCategories) -contains 'engines') { continue }
+        $exe = if ($j.LaunchExecutable) { [IO.Path]::Combine([string]$j.InstallLocation, [string]$j.LaunchExecutable) } else { '' }
+        & $addDir ([string]$j.DisplayName) ([string]$j.InstallLocation) @($exe)
+    }
+    # GOG Galaxy and Ubisoft Connect record their games in HKLM.
+    foreach ($k in @(Get-ChildItem -LiteralPath 'HKLM:\SOFTWARE\WOW6432Node\GOG.com\Games')) {
+        $p = Get-ItemProperty -LiteralPath $k.PSPath
+        & $addDir ([string]$p.gameName) ([string]$p.path) @([string]$p.exe)
+    }
+    foreach ($k in @(Get-ChildItem -LiteralPath 'HKLM:\SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs')) {
+        & $addDir '' ([string](Get-ItemProperty -LiteralPath $k.PSPath).InstallDir) @()
+    }
+    # EA, Battle.net, Riot, Rockstar and other publishers register their games
+    # as installed programs; their launchers and anti-cheats are left out.
+    $pub = '^(Electronic Arts|EA Games|Blizzard Entertainment|Activision|Riot Games|Rockstar Games|Ubisoft|Bethesda|Square Enix|BANDAI NAMCO|CAPCOM|SEGA|Warner Bros|2K|Embark Studios|Bungie|Grinding Gear Games|miHoYo|COGNOSPHERE|HoYoverse|Wargaming|Mojang)'
+    $notGame = 'Launcher|Social Club|Battle\.net|EA app|^Origin|Riot Client|Vanguard|Ubisoft Connect|Uplay|Anti-?Cheat|Redistributable|Runtime|Driver|Overlay|Updater|Prerequisite'
+    $un = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall', ($user + '\Software\Microsoft\Windows\CurrentVersion\Uninstall'))
+    foreach ($root in $un) {
+        foreach ($k in @(Get-ChildItem -LiteralPath $root)) {
+            $p = Get-ItemProperty -LiteralPath $k.PSPath
+            if ([string]$p.Publisher -notmatch $pub -or [string]$p.DisplayName -match $notGame -or -not $p.InstallLocation) { continue }
+            & $addDir ([string]$p.DisplayName) ([string]$p.InstallLocation) @()
+        }
+    }
+    # Minecraft: Java Edition runs in javaw.exe from the launcher's own Java.
+    $prof = Get-UserProfile
+    $mc = @()
+    foreach ($r in @([IO.Path]::Combine([string]${env:ProgramFiles(x86)}, 'Minecraft Launcher', 'runtime'), [IO.Path]::Combine([string]$prof, 'AppData', 'Roaming', '.minecraft', 'runtime'), [IO.Path]::Combine([string]$prof, 'AppData', 'Local', 'Packages', 'Microsoft.4297127D64EC6_8wekyb3d8bbwe', 'LocalCache', 'Local', 'runtime'))) {
+        if (Test-Path -LiteralPath $r) { $mc += @(Get-ChildItem -LiteralPath $r -Filter 'javaw.exe' -Recurse -Depth 6 | ForEach-Object { $_.FullName }) }
+    }
+    if ($mc.Count) { $games.Add([pscustomobject]@{ Name = 'Minecraft: Java Edition'; Exes = $mc }) }
+    # Programs Windows has recognised as games (Game Bar's list).
+    $gcs = Open-UserKey 'System\GameConfigStore\Children' $false
+    if ($gcs) {
+        $known = @{}
+        foreach ($g in $games) { foreach ($x in $g.Exes) { $known[$x.ToLower()] = 1 } }
+        foreach ($n in $gcs.GetSubKeyNames()) {
+            $c = $gcs.OpenSubKey($n)
+            if (-not $c) { continue }
+            $x = [string]$c.GetValue('MatchedExeFullPath', '')
+            $c.Close()
+            if (-not $x -or $known.ContainsKey($x.ToLower()) -or (Split-Path -Leaf $x) -match $script:SkipExe) { continue }
+            if (-not (Test-Path -LiteralPath $x -PathType Leaf)) { continue }
+            $known[$x.ToLower()] = 1
+            $d = [string](Get-Item -LiteralPath $x).VersionInfo.FileDescription
+            $games.Add([pscustomobject]@{ Name = $(if ($d.Trim()) { $d.Trim() } else { [IO.Path]::GetFileNameWithoutExtension($x) }); Exes = @($x) })
+        }
+        $gcs.Close()
+    }
+    [pscustomobject]@{ Games = $games.ToArray(); TimedOut = $clock.Elapsed.TotalSeconds -ge 90 }
+}
+
+# "Key=Value;" entries of a DirectX preference, as an ordered table.
+function Split-DxEntries([string]$s) {
+    $t = [ordered]@{}
+    foreach ($e in $s.Split(';')) {
+        $i = $e.IndexOf('=')
+        if ($i -gt 0) { $t[$e.Substring(0, $i).Trim()] = $e.Substring($i + 1).Trim() }
+    }
+    $t
+}
+switch ($env:GT_STEP) {
+
+'refresh' {
+    # Windows often leaves a new monitor at 60 Hz, and drivers reset it after
+    # a cable or driver change. A frame cap or V-Sync tied to the refresh rate
+    # then holds games at 60 FPS, and every frame waits longer to be shown.
+    if (-not (Import-Native)) { return }
+    $disp = @([GameTune.Displays]::List() | Sort-Object { -not $_.Primary })
+    if (-not $disp.Count) { Fail 'Could not read the monitor settings.'; return }
+    $n = 0
+    foreach ($d in $disp) {
+        $n++
+        $e = Read-MonitorEdid $d.MonitorPath
+        $tags = @(@($e.Name, $(if ($d.Primary -and $disp.Count -gt 1) { 'main' })) | Where-Object { $_ })
+        $label = 'Monitor ' + $n + $(if ($tags.Count) { ' (' + ($tags -join ', ') + ')' })
+        $res = '{0} x {1}' -f $d.Width, $d.Height
+        if ($d.MaxHz -gt $d.Hz + 1) {
+            $test = [GameTune.Displays]::Apply($d.Device, $d.MaxHz, $true)
+            if ($test -ne 0) {
+                Warn ($label + ': ' + $d.Hz + ' Hz kept. It lists ' + $d.MaxHz + ' Hz, but the driver refused it (code ' + $test + ').')
+                continue
+            }
+            $rc = [GameTune.Displays]::Apply($d.Device, $d.MaxHz, $false)
+            if ($rc -ne 0) {
+                $back = [GameTune.Displays]::Apply($d.Device, $d.Hz, $false)
+                Fail ($label + ': could not switch to ' + $d.MaxHz + ' Hz (code ' + $rc + ')' + $(if ($back -eq 0) { '; it stays at ' + $d.Hz + ' Hz.' } else { '.' }))
+                continue
+            }
+            Say ('  ' + $label + ' now runs at ' + $d.MaxHz + ' Hz instead of ' + $d.Hz + ' Hz.')
+            if (Wait-Yes 15 '  Is the picture fine? Y keeps it; without an answer it switches back in 15 seconds. [Y/N] ') {
+                Ok ($label + ': ' + $res + ' at ' + $d.MaxHz + ' Hz instead of ' + $d.Hz + ' Hz.')
+                $d.Hz = $d.MaxHz
+            } else {
+                $back = [GameTune.Displays]::Apply($d.Device, $d.Hz, $false)
+                if ($back -eq 0) { Info ($label + ': switched back to ' + $d.Hz + ' Hz.') }
+                else { Fail ($label + ': could not switch back (code ' + $back + '). Settings > System > Display > Advanced display sets the refresh rate.') }
+                continue
+            }
+        } else {
+            Ok ($label + ': ' + $res + ' at ' + $d.Hz + ' Hz, the highest it offers at this resolution.')
+        }
+        # The monitor reports a high refresh rate, but this connection carries
+        # only about 60 Hz at this resolution: an HDMI 1.4 port or cable, a
+        # DisplayPort-to-HDMI adapter, or a motherboard port.
+        if ($e.MaxHz -ge 100 -and $d.MaxHz -le 75) {
+            Warn ($label + ' can do up to ' + $e.MaxHz + ' Hz, but this connection only carries ' + $d.MaxHz + ' Hz at ' + $res + '.')
+            More 'Use DisplayPort on the graphics card, or an HDMI 2.0 port and cable (HDMI 2.1 for 4K above 60 Hz).'
+        }
+    }
+}
+
+'gpupref' {
+    # On a PC with two GPUs (a laptop with integrated and discrete graphics,
+    # or a desktop with the processor's graphics enabled), a game the driver
+    # does not recognise can start on the slow integrated GPU. The Windows
+    # setting decides before the NVIDIA and AMD per-app settings do.
+    if (-not (Import-Native)) { return }
+    $r = Get-GpuRanking
+    if (-not $r.Ranked) { Skip 'Windows could not rank the graphics adapters.'; return }
+    if (-not $r.Two) { Ok ('One GPU for games (' + $r.Fast.Name + '), so there is nothing to choose.'); return }
+    Info ('High performance: ' + $r.Fast.Name + '. Power saving: ' + $r.Saving.Name + '.')
+    $found = Find-Games
+    $games = @($found.Games)
+    if (-not $games.Count) { Skip 'No installed games found (Steam, Epic, GOG, Ubisoft, EA, Battle.net, Riot, Rockstar, Minecraft).'; return }
+    $key = Open-UserKey 'Software\Microsoft\DirectX\UserGpuPreferences' $true
+    if (-not $key) { Fail 'Could not open the Windows graphics preferences.'; return }
+    $set = New-Object 'System.Collections.Generic.List[string]'
+    $had = 0
+    $fail = 0
+    $saving = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($g in $games) {
+        $changed = $false
+        foreach ($x in $g.Exes) {
+            $t = Split-DxEntries ([string]$key.GetValue($x, ''))
+            if ([string]$t['GpuPreference'] -eq '2') { $had++; continue }
+            # 1 = power saving: someone chose it for this program, so it stays.
+            if ([string]$t['GpuPreference'] -eq '1') { if (-not $saving.Contains($g.Name)) { $saving.Add($g.Name) }; continue }
+            $t['GpuPreference'] = '2'
+            $v = (@($t.Keys | ForEach-Object { $_ + '=' + $t[$_] }) -join ';') + ';'
+            try { $key.SetValue($x, $v, [Microsoft.Win32.RegistryValueKind]::String); $changed = $true } catch { $fail++ }
+        }
+        if ($changed) { $set.Add($g.Name) }
+    }
+    $key.Close()
+    if ($set.Count) {
+        $names = @($set | Sort-Object -Unique)
+        $list = ($names | Select-Object -First 12) -join ', '
+        if ($names.Count -gt 12) { $list += ' and ' + ($names.Count - 12) + ' more' }
+        Ok ('Set to the high-performance GPU: ' + $list + '.')
+    }
+    if ($had) { Ok ([string]$had + ' game program(s) were already set to it.') }
+    if ($fail) { Fail ([string]$fail + ' program(s) could not be set.') }
+    foreach ($s in $saving) { Warn ($s + ' is set to the power-saving GPU in Windows graphics settings. Kept, as someone chose it; Settings > System > Display > Graphics changes it.') }
+    if ($found.TimedOut) { Info 'The search stopped after 90 seconds; games it did not reach keep the Windows default.' }
+    Info 'Games installed later: run GameTune again, or add them under Settings > System > Display > Graphics.'
+}
+
+'nvidia' {
+    # Settings in the NVIDIA Control Panel's global profile that old tweak
+    # guides change and that cost FPS or cause stutter. Each is set back to
+    # NVIDIA's default; per-game profiles are not touched.
+    if (-not (Import-Native)) { return }
+    $nv = New-Object GameTune.Nv
+    $rc = $nv.Open()
+    if ($rc -eq -1000) { $nv.Close(); Skip 'The NVIDIA driver is not installed.'; return }
+    if ($rc -ne 0) { $nv.Close(); Fail ('Could not open the NVIDIA driver settings (NVAPI status ' + $rc + ').'); return }
+    $fixed = 0
+    try {
+        # Shader cache: off makes every game compile its shaders again at every
+        # start and whenever a new effect appears, which shows as stutter.
+        $s = $nv.Read(0x00198FFF)
+        if ($s.Found -and $s.Value -eq 0) {
+            if ($nv.Restore(0x00198FFF) -eq 0) { $fixed++; Ok 'Shader cache was off - turned back on. With it off, games compile shaders again on every start and stutter while they do.' }
+            else { Fail 'Shader cache is off and could not be turned back on.' }
+        } else { Ok 'Shader cache: on.' }
+        # Shader cache size, in MB. NVIDIA's default grew with its drivers: 4 GB
+        # up to R565, 8 GB in R570, 12 GB in R580 and 16 GB from R590 on, and
+        # NVIDIA advises against lowering it. A smaller size, often set by
+        # tweak guides when the default was 4 GB, makes the driver throw
+        # compiled shaders away, and games compile them again mid-game.
+        $br = Get-NvidiaBranch
+        $def = if ($br -ge 590) { 16384 } elseif ($br -ge 580) { 12288 } elseif ($br -ge 570) { 8192 } else { 4096 }
+        $z = $nv.Read(0x00AC8497)
+        $user = $z.Found -and $z.Location -eq 0 -and -not $z.Predefined
+        if ($user -and $z.Value -ne [uint32]::MaxValue -and $z.Value -lt $def) {
+            if ($nv.Restore(0x00AC8497) -eq 0) { $fixed++; Ok ('Shader cache size was ' + (Format-MB $z.Value) + ' - set back to the driver default' + $(if ($br) { ' (' + (Format-MB $def) + ' with driver ' + $br + ')' }) + ', so compiled shaders stop being thrown away.') }
+            else { Fail ('Shader cache size is ' + (Format-MB $z.Value) + ' and could not be changed.') }
+        } elseif ($user -and $z.Value -eq [uint32]::MaxValue) { Ok 'Shader cache size: unlimited.' }
+        elseif ($user) { Ok ('Shader cache size: ' + (Format-MB $z.Value) + '.') }
+        else { Ok ('Shader cache size: driver default' + $(if ($br) { ', ' + (Format-MB $def) + ' with driver ' + $br }) + '.') }
+        # Threaded optimization forced off: OpenGL games (Minecraft: Java
+        # Edition, emulators, older id Tech games) then do all driver work on
+        # one thread and lose FPS when CPU-bound. Auto lets per-game profiles decide.
+        $t = $nv.Read(0x20C1221E)
+        if ($t.Found -and $t.Location -eq 0 -and $t.Value -eq 2) {
+            if ($nv.Restore(0x20C1221E) -eq 0) { $fixed++; Ok 'Threaded optimization was forced off - set back to Auto. Forced off costs CPU-bound OpenGL games FPS.' }
+            else { Fail 'Threaded optimization is forced off and could not be changed.' }
+        } else { Ok 'Threaded optimization: Auto or on.' }
+        # Preferred graphics processor (Optimus laptops) set to Integrated:
+        # every game without its own NVIDIA profile then runs on the iGPU.
+        $o = $nv.Read(0x10F9DC81)
+        if ($o.Found -and $o.Location -eq 0 -and -not $o.Predefined -and ($o.Value -band 0x11) -eq 0) {
+            $a = $nv.Restore(0x10F9DC81)
+            [void]$nv.Restore(0x10F9DC80)
+            if ($a -eq 0) { $fixed++; Ok 'Preferred graphics processor was Integrated graphics - set back to Auto-select, so games run on the NVIDIA GPU.' }
+            else { Fail 'Preferred graphics processor is Integrated graphics and could not be changed.' }
+        }
+        if ($fixed) {
+            $sv = $nv.Save()
+            if ($sv -eq 0) { Info 'Saved. Applies to games started from now on.' }
+            else { Fail ('The changes could not be saved (NVAPI status ' + $sv + ').') }
+        }
+    } finally { $nv.Close() }
+}
+
+'amd' {
+    # AMD Software keeps its global graphics settings in the display adapter's
+    # registry key. Shader cache set to Off makes every game compile its
+    # shaders again at each start, which stutters; it goes back to AMD
+    # optimized, the default. The value keeps the type the driver stored it
+    # in: UTF-16 digits in binary on most drivers, a string or a number on
+    # some newer ones. 0 is Off, 1 AMD optimized, 2 always on.
+    $n = 0
+    foreach ($a in @(Get-DisplayAdapterKeys)) {
+        if ($a.Provider -notmatch 'Advanced Micro Devices' -and $a.Name -notmatch 'Radeon') { continue }
+        $n++
+        $u = Open-MachineKey ($a.Path + '\UMD') $true
+        # Assigned directly: an if expression would unroll a binary value into bytes.
+        $v = $null
+        if ($u) { $v = $u.GetValue('ShaderCache', $null) }
+        if ($null -eq $v) { Ok ($a.Name + ': shader cache at its default, AMD optimized.') }
+        else {
+            $off = $false
+            $new = $null
+            if ($v -is [byte[]]) { $off = $v.Count -ge 1 -and $v[0] -eq 0x30; $new = [byte[]](0x31, 0x00) }
+            elseif ($v -is [string]) { $off = $v.Trim([char]0).Trim() -eq '0'; $new = '1' }
+            elseif ($v -is [int]) { $off = $v -eq 0; $new = 1 }
+            if ($off) {
+                try {
+                    $u.SetValue('ShaderCache', $new, $u.GetValueKind('ShaderCache'))
+                    Ok ($a.Name + ': shader cache was Off - set back to AMD optimized, the default. With it off, games compile shaders again at every start and stutter while they do.')
+                } catch { Fail ($a.Name + ': shader cache is Off and could not be changed.') }
+            } else { Ok ($a.Name + ': shader cache on.') }
+        }
+        if ($u) { $u.Close() }
+    }
+    if (-not $n) { Skip 'No AMD graphics driver found.' }
+}
+
+'findings' {
+    # Hardware and setup problems that cost FPS or 1% lows and that only the
+    # owner can fix: BIOS settings, slots, cables, drives and running software.
+    $native = Import-Native
+    $script:fix = New-Object 'System.Collections.Generic.List[object]'
+    function Need([int]$rank, [string]$text) { $script:fix.Add([pscustomobject]@{ Rank = $rank; Text = $text }) }
+    $cv = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+    $build = 0
+    [void][int]::TryParse([string]$cv.CurrentBuildNumber, [ref]$build)
+    $ubr = [int]$cv.UBR
+    $laptop = Test-Laptop
+    $cs = Get-CimInstance Win32_ComputerSystem
+
+    # Power
+    if ($laptop) {
+        $bat = @(Get-CimInstance Win32_Battery)
+        if ($bat.Count -and [int]$bat[0].BatteryStatus -eq 1) {
+            Warn 'Running on battery: laptops cut CPU and GPU power on battery, and NVIDIA Battery Boost caps games at 30 FPS.'
+            Need 2 'Plug the laptop in to play.'
+        } else { Ok 'Laptop: plugged in.' }
+    }
+
+    # Processor
+    $cpu = @(Get-CimInstance Win32_Processor)[0]
+    $cname = (([string]$cpu.Name) -replace '\s+', ' ').Trim()
+    # Intel 13th and 14th gen desktop: microcode 0x12B and later stop the
+    # voltage problem behind crashes and degrading CPUs.
+    if ($cname -match 'i[579]-1[34]\d{3}(K|KF|KS|F|T)?(\s|$)') {
+        $b = Get-Reg 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' 'Update Revision'
+        if ($b -is [byte[]] -and $b.Count -ge 8) {
+            $rev = [BitConverter]::ToUInt32($b, 4)
+            if ($rev -gt 0 -and $rev -lt 0x12B) {
+                Warn ('CPU microcode 0x{0:X} predates Intel''s 0x12B fix for 13th and 14th gen instability. It does not cost FPS; it causes crashes and slowly damages the CPU.' -f $rev)
+                Need 12 'Update the BIOS to one with Intel microcode 0x12F or newer.'
+            } elseif ($rev -gt 0) { Ok ('CPU microcode 0x{0:X}: has Intel''s fix for 13th and 14th gen instability.' -f $rev) }
+        }
+    }
+    if ($build -lt 22000 -and $cname -match '1[2-4]th Gen|Core\(TM\) Ultra|Core Ultra') {
+        Warn 'Windows 10 has no Thread Director support, so game threads can land on the E-cores.'
+        Need 9 'Move to Windows 11: it keeps game threads on the P-cores of this CPU.'
+    }
+    # Windows 11 24H2 changed branch prediction for Ryzen; 22H2 and 23H2 got it
+    # with KB5041587 (builds 22621.4112 and 22631.4112). Hardware Unboxed
+    # measured 10 to 11 percent more FPS on average with it on Ryzen 7000 and
+    # 9000. Windows 10 does not get it.
+    if ($cname -match 'Ryzen') {
+        $hub = 'Hardware Unboxed measured 10 to 11% more FPS on average with it (Ryzen 7 7700X and 9700X).'
+        if ($build -lt 22000) {
+            Warn ('Windows 10 does not get the branch-prediction update that Windows 11 24H2 brought for Ryzen. ' + $hub)
+            Need 9 'Move to Windows 11 24H2 or newer for the Ryzen branch-prediction update.'
+        } elseif ($build -lt 22621 -or ($build -lt 26100 -and $ubr -lt 4112)) {
+            Warn ('This Windows build lacks the Ryzen branch-prediction update (24H2, or 23H2 from KB5041587, August 2024). ' + $hub)
+            Need 9 'Install the Windows updates: 24H2, or 23H2 with KB5041587 or later, has the Ryzen branch-prediction update.'
+        }
+    }
+
+    # Memory
+    $mods = @(Get-CimInstance Win32_PhysicalMemory | Where-Object { [double]$_.Capacity -gt 0 })
+    $slots = [int](@(Get-CimInstance Win32_PhysicalMemoryArray | Where-Object { [int]$_.Use -eq 3 }) | Measure-Object -Property MemoryDevices -Sum).Sum
+    $totalGB = [Math]::Round((($mods | Measure-Object -Property Capacity -Sum).Sum) / 1GB)
+    $tnames = @{ 24 = 'DDR3'; 26 = 'DDR4'; 29 = 'LPDDR3'; 30 = 'LPDDR4'; 34 = 'DDR5'; 35 = 'LPDDR5' }
+    $info = @()
+    foreach ($m in $mods) {
+        $type = $tnames[[int]$m.SMBIOSMemoryType]
+        if (-not $type) { $type = 'memory' }
+        $cfg = [int]$m.ConfiguredClockSpeed
+        if ($cfg -gt 0 -and $cfg -lt 1800 -and $type -match '^DDR[45]$') { $cfg *= 2 }
+        $pn = ([string]$m.PartNumber).Trim()
+        $info += [pscustomobject]@{ GB = [Math]::Round([double]$m.Capacity / 1GB); Type = $type; Speed = $cfg; Rated = (Get-RatedSpeed $pn); Part = $pn; Channel = (Get-Channel $m) }
+    }
+    if ($mods.Count) {
+        $line = 'Memory: ' + [string]$totalGB + ' GB in ' + $mods.Count + ' stick' + $(if ($mods.Count -ne 1) { 's' }) + $(if ($info[0].Speed) { ', ' + $info[0].Type + ' at ' + $info[0].Speed + ' MT/s' })
+        $known = @($info | Where-Object { $_.Channel })
+        $distinct = @($known | ForEach-Object { $_.Channel } | Select-Object -Unique)
+        $slow = @($info | Where-Object { $_.Rated -gt 0 -and $_.Speed -gt 0 -and $_.Rated -gt $_.Speed + 150 })
+        $single = $false
+        if ($mods.Count -eq 1 -and $slots -ne 1) {
+            $single = $true
+            Warn ($line + '. One stick means one memory channel: in Hardware Unboxed''s test that cost about 12% average FPS and 16% of the 1% lows (much less on X3D CPUs).')
+            Need 4 'Add a second, identical memory stick for dual channel.'
+        } elseif ($known.Count -eq $mods.Count -and $mods.Count -gt 1 -and $distinct.Count -eq 1) {
+            $single = $true
+            Warn ($line + ', but all in channel ' + $distinct[0] + ', so the CPU uses one channel instead of two.')
+            Need 4 'Move a memory stick to the other channel''s slot (the manual names the pair, usually A2 and B2).'
+        }
+        if ($slow.Count) {
+            Warn ('Memory runs at ' + $slow[0].Speed + ' MT/s but the kit is rated ' + $slow[0].Rated + ' MT/s: XMP or EXPO is off. Hardware Unboxed measured 17 to 20% more FPS and about 30% better 1% lows with it on.')
+            Need 3 ('Turn on XMP, EXPO or DOCP in the BIOS (rated ' + $slow[0].Rated + ' MT/s).')
+        } elseif (-not $laptop -and @($info | Where-Object { $_.Rated -eq 0 -and (($_.Type -eq 'DDR4' -and $_.Speed -le 2666) -or ($_.Type -eq 'DDR5' -and $_.Speed -le 4800)) }).Count) {
+            Info ($line + ', the standard speed without XMP or EXPO. If the sticks'' label shows a higher speed, turn XMP or EXPO on in the BIOS.')
+        } elseif (-not $single) {
+            Ok ($line + $(if ($distinct.Count -ge 2) { ', dual channel' }) + '.')
+        }
+        if ($totalGB -lt 16) {
+            Warn ('Only ' + $totalGB + ' GB of memory: current games page to disk with less than 16 GB, which shows up as stutter.')
+            Need 6 'Upgrade to 16 GB of memory at least, 32 GB for current games with a browser open.'
+        }
+        if (@($info | ForEach-Object { $_.Part } | Select-Object -Unique).Count -gt 1) {
+            Info 'The sticks come from different kits. Mixed kits often cannot run their rated speed; if XMP or EXPO is unstable, that is why.'
+        }
+    }
+
+    # Graphics
+    $r = $null
+    $gpus = @()
+    if ($native) {
+        $r = Get-GpuRanking
+        $gpus = @([GameTune.Dxgi]::List() | Where-Object { -not $_.Software })
+    }
+    $dgpu = if ($r -and $r.Ranked) { $r.Fast } else { $null }
+    $vcs = @(Get-CimInstance Win32_VideoController)
+    if ($dgpu) {
+        $vc = @($vcs | Where-Object { ([string]$_.Name).Trim() -eq $dgpu.Name })[0]
+        $line = $dgpu.Name + $(if ($dgpu.Vram -ge 1GB) { ', {0:0} GB' -f ($dgpu.Vram / 1GB) })
+        $old = $false
+        if ($vc -and $vc.DriverDate) {
+            $date = [datetime]$vc.DriverDate
+            $line += ', driver from ' + $date.ToString('yyyy-MM-dd')
+            $old = ((Get-Date) - $date).TotalDays -gt 365
+        }
+        Ok ('Graphics: ' + $line + '.')
+        if ($old) {
+            Warn 'That driver is more than a year old: new games get their performance fixes in newer drivers.'
+            Need 11 'Install the current graphics driver.'
+        }
+        if ($dgpu.Vram -ge 3GB -and $dgpu.Vram -le 8.5GB) {
+            Info ('{0:0} GB of video memory runs full in current games at the highest texture setting; when it does, 1% lows collapse.' -f ($dgpu.Vram / 1GB))
+            Need 10 'In new games, set texture quality one step below the highest: the video memory runs full there.'
+        }
+    }
+    if ($dgpu -and $dgpu.Vendor -eq 0x10DE) {
+        $smi = [IO.Path]::Combine([string]$env:SystemRoot, 'System32', 'nvidia-smi.exe')
+        if (-not (Test-Path -LiteralPath $smi)) { $smi = [IO.Path]::Combine([string]$env:ProgramFiles, 'NVIDIA Corporation', 'NVSMI', 'nvidia-smi.exe') }
+        if (Test-Path -LiteralPath $smi) {
+            $rows = @(& $smi '--query-gpu=name,pcie.link.width.current,pcie.link.width.max' '--format=csv,noheader,nounits' 2>$null)
+            $mem = @(& $smi '-q' '-d' 'MEMORY' 2>$null)
+            $bar = @()
+            for ($i = 0; $i -lt $mem.Count; $i++) {
+                if ([string]$mem[$i] -notmatch 'BAR1 Memory Usage') { continue }
+                for ($k = $i + 1; $k -lt [Math]::Min($mem.Count, $i + 4); $k++) {
+                    if ([string]$mem[$k] -match 'Total\s*:\s*(\d+)\s*MiB') { $bar += [int]$Matches[1]; break }
+                }
+            }
+            for ($i = 0; $i -lt $rows.Count; $i++) {
+                $f = @(([string]$rows[$i]).Split(',') | ForEach-Object { $_.Trim() })
+                if ($f.Count -lt 3) { continue }
+                $cur = 0
+                $max = 0
+                [void][int]::TryParse($f[1], [ref]$cur)
+                [void][int]::TryParse($f[2], [ref]$max)
+                if ($cur -gt 0 -and $max -gt 0 -and $cur -lt $max) {
+                    Warn ($f[0] + ' runs its PCIe link at x' + $cur + ' instead of x' + $max + '.')
+                    Need 7 'Reseat the graphics card in the top x16 slot; a riser, or an M.2 drive sharing its lanes, can also cut the link.'
+                } elseif ($cur -gt 0 -and $cur -le 4 -and -not $laptop -and $f[0] -notmatch 'GT 10[13]0|GT 7[13]0') {
+                    Warn ($f[0] + ' runs on only 4 PCIe lanes: a chipset slot or a riser.')
+                    Need 7 'Move the graphics card to the top x16 slot.'
+                } elseif ($cur -gt 0) { Ok ('PCIe link: x' + $cur + '.') }
+                if ($i -lt $bar.Count) {
+                    if ($bar[$i] -le 256) {
+                        Warn 'Resizable BAR is off. NVIDIA uses it in the games it has tested, about 2 to 4% faster there.'
+                        Need 13 'Turn on "Above 4G Decoding" and "Re-Size BAR" in the BIOS (needs UEFI boot with CSM off).'
+                    } else { Ok 'Resizable BAR: on.' }
+                }
+            }
+        }
+    } elseif ($dgpu -and $dgpu.Vendor -eq 0x8086 -and $dgpu.Vram -ge 3GB) {
+        Info 'Intel Arc cards lose about a quarter of their speed without Resizable BAR: Intel Graphics Software shows whether it is on.'
+    } elseif ($dgpu -and $dgpu.Vendor -eq 0x1002 -and $dgpu.Name -match 'Radeon.*\b(RX|PRO|Pro|VII)\b') {
+        Info 'AMD Smart Access Memory (Resizable BAR) added 7 to 16% at 1080p in Hardware Unboxed''s test: AMD Software > Performance > Tuning shows whether it is on.'
+    }
+
+    # Frame rate caps in the graphics drivers. NVIDIA's global Max Frame Rate
+    # just below the refresh rate is the usual G-SYNC setting; far below it,
+    # it caps every game. Radeon Chill lowers the frame rate whenever little
+    # moves on screen, to save power.
+    $mainHz = 0
+    if ($native) { $mainHz = [int](@([GameTune.Displays]::List() | Sort-Object { -not $_.Primary })[0]).Hz }
+    if ($native -and $dgpu -and $dgpu.Vendor -eq 0x10DE) {
+        $nv = New-Object GameTune.Nv
+        if ($nv.Open() -eq 0) {
+            $f = $nv.Read(0x10835002)
+            if ($f.Found -and $f.Value -gt 0) {
+                if ($mainHz -gt 0 -and $f.Value -lt [Math]::Floor($mainHz * 0.9)) {
+                    Warn ('NVIDIA Max Frame Rate caps every game at ' + $f.Value + ' FPS, well below the ' + $mainHz + ' Hz of the main monitor.')
+                    Need 5 ('Raise or turn off Max Frame Rate in NVIDIA Control Panel > Manage 3D settings (with G-SYNC, use ' + ($mainHz - 3) + ').')
+                } elseif ($mainHz -gt 0 -and $f.Value -lt $mainHz) { Ok ('NVIDIA Max Frame Rate: ' + $f.Value + ' FPS, just below the ' + $mainHz + ' Hz refresh rate.') }
+                else { Ok ('NVIDIA Max Frame Rate: ' + $f.Value + ' FPS' + $(if ($mainHz -gt 0) { ', main monitor at ' + $mainHz + ' Hz' }) + '.') }
+            }
+        }
+        $nv.Close()
+    }
+    foreach ($a in @(Get-DisplayAdapterKeys)) {
+        if (($a.Provider -match 'Advanced Micro Devices' -or $a.Name -match 'Radeon') -and $null -ne $a.Chill -and [int]$a.Chill -eq 1) {
+            Warn ($a.Name + ': Radeon Chill is switched on for all games. It lowers the frame rate whenever little moves on screen.')
+            Need 6 'Turn off Radeon Chill in AMD Software > Gaming > Graphics, unless you want it to save power.'
+        }
+    }
+
+    # Monitors
+    if ($native) {
+        $disp = @([GameTune.Displays]::List() | Sort-Object { -not $_.Primary })
+        $n = 0
+        foreach ($d in $disp) {
+            $n++
+            $e = Read-MonitorEdid $d.MonitorPath
+            $label = 'Monitor ' + $n + $(if ($e.Name) { ' (' + $e.Name + ')' })
+            if ($r -and $r.Two -and $d.Adapter -eq $r.Saving.Name) {
+                if (-not $laptop) {
+                    Warn ($label + ' is plugged into the motherboard, so it runs on ' + $d.Adapter + ' and every frame from ' + $r.Fast.Name + ' is copied across first.')
+                    Need 1 ('Plug ' + $label + ' into the graphics card instead of the motherboard.')
+                } elseif ($d.Primary) {
+                    Info ('The laptop screen runs on ' + $d.Adapter + ', so frames from ' + $r.Fast.Name + ' are copied through it.')
+                    Need 8 'If the laptop has a MUX switch or Advanced Optimus, set the GPU mode to discrete (dGPU) in the maker''s app: 10 to 17% more FPS in tests.'
+                }
+            }
+            if ($e.MaxHz -ge 100 -and $d.MaxHz -le 75) {
+                Warn ($label + ' can do up to ' + $e.MaxHz + ' Hz, but its connection only carries ' + $d.MaxHz + ' Hz at this resolution.')
+                Need 5 ('Connect ' + $label + ' by DisplayPort, or an HDMI 2.0 port and cable (HDMI 2.1 for 4K above 60 Hz), on the graphics card.')
+            }
+        }
+    }
+
+    # Storage
+    foreach ($v in @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3')) {
+        $size = [double]$v.Size
+        $free = [double]$v.FreeSpace
+        if ($size -le 0) { continue }
+        if ($free / $size -lt 0.1 -or $free -lt 15GB) {
+            Warn ('{0} has {1:0} GB free of {2:0} GB. A nearly full SSD writes slowly, and shader caches cannot grow, so games compile shaders again and stutter.' -f $v.DeviceID, ($free / 1GB), ($size / 1GB))
+            Need 9 ('Free up space on drive ' + $v.DeviceID + ' (keep 10 to 15% of it free).')
+        }
+    }
+    $libs = @()
+    $steam = [string](Get-Reg ((Get-UserPath) + '\Software\Valve\Steam') 'SteamPath')
+    if ($steam) {
+        $steam = $steam.Replace([IO.Path]::AltDirectorySeparatorChar, [IO.Path]::DirectorySeparatorChar)
+        $libs += $steam
+        $vdf = [IO.Path]::Combine($steam, 'steamapps', 'libraryfolders.vdf')
+        if (Test-Path -LiteralPath $vdf) { foreach ($l in [IO.File]::ReadAllLines($vdf)) { if ($l -match '"path"\s+"([^"]+)"') { $libs += ($Matches[1] -replace '\\\\', '\') } } }
+    }
+    $epic = [IO.Path]::Combine([string]$env:ProgramData, 'Epic', 'EpicGamesLauncher', 'Data', 'Manifests')
+    foreach ($f in @(if (Test-Path -LiteralPath $epic) { Get-ChildItem -LiteralPath $epic -Filter '*.item' })) {
+        $j = $null
+        try { $j = [IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json } catch { }
+        if ($j -and $j.InstallLocation) { $libs += [string]$j.InstallLocation }
+    }
+    $hdd = @()
+    $kinds = @{}
+    foreach ($l in $libs) {
+        if ($l -notmatch '^([A-Za-z]):') { continue }
+        $dl = $Matches[1].ToUpper()
+        if (-not $kinds.ContainsKey($dl)) { $kinds[$dl] = Get-DriveKind $l }
+        if ($kinds[$dl] -eq 'hard drive' -and $hdd -notcontains $dl) { $hdd += $dl }
+    }
+    foreach ($dl in $hdd) {
+        Warn ('Games are installed on drive ' + $dl + ':, a hard drive. Games stream textures and levels while you play, and a hard drive cannot keep up: that causes hitches.')
+        Need 8 ('Move the games on drive ' + $dl + ': to an SSD.')
+    }
+    if (-not $hdd.Count -and $kinds.Count) { Ok ('Game drives: ' + (@($kinds.Keys | Sort-Object | ForEach-Object { $_ + ': ' + $(if ($kinds[$_]) { $kinds[$_] } else { 'type unknown' }) }) -join ', ') + '.') }
+
+    # Software running now
+    $procs = @{}
+    foreach ($p in @(Get-Process)) { $procs[([string]$p.ProcessName).ToLower()] = 1 }
+    $has = { param([string[]]$names) foreach ($x in $names) { if ($procs.ContainsKey($x.ToLower())) { return $true } }; $false }
+    $rgb = @()
+    if (& $has @('iCUE')) { $rgb += 'Corsair iCUE' }
+    if (& $has @('LightingService', 'ArmouryCrate', 'ArmouryCrate.Service')) { $rgb += 'ASUS Armoury Crate or Aura' }
+    if (& $has @('SignalRgb', 'SignalRgbLauncher')) { $rgb += 'SignalRGB' }
+    if (& $has @('MSI.CentralServer', 'MSI Center')) { $rgb += 'MSI Center' }
+    if (& $has @('NZXT CAM')) { $rgb += 'NZXT CAM' }
+    if (& $has @('RazerAppEngine', 'Razer Synapse 3', 'Razer Synapse Service')) { $rgb += 'Razer Synapse' }
+    if (& $has @('OpenRGB')) { $rgb += 'OpenRGB' }
+    if (& $has @('RGBFusion', 'GCC')) { $rgb += 'Gigabyte RGB Fusion or Control Center' }
+    $hw = & $has @('HWiNFO64', 'HWiNFO32', 'HWiNFO')
+    if ($rgb.Count -and $hw) {
+        Warn ('HWiNFO runs together with ' + ($rgb -join ', ') + ': both read the motherboard''s SMBus, and the collisions cause periodic stutter.')
+        Need 10 'Turn off HWiNFO''s support for the RGB devices, or do not run HWiNFO and the RGB software together.'
+    } elseif ($rgb.Count) {
+        Info ('Running: ' + ($rgb -join ', ') + '. Lighting software polls the SMBus and has been measured causing periodic stutter (SignalRGB, ASUS LightingService).')
+        Need 14 ('If games stutter at regular intervals, test once with ' + ($rgb -join ' and ') + ' closed (save the lighting to the devices first).')
+    }
+    if (& $has @('NVIDIA Overlay', 'NVIDIA Share')) {
+        Info 'The NVIDIA overlay is on. With Game Filters and Photo Mode on, games ran up to 15% slower in Tom''s Hardware''s test;'
+        More 'NVIDIA App 11.0.1 and later leave them off. Check NVIDIA App > Settings > Features > Overlay > Game Filters and Photo Mode.'
+    }
+    if (& $has @('Medal', 'Overwolf', 'Outplayed')) {
+        Info 'A clip recorder (Medal or Overwolf) is running: background recording encodes video for as long as you play.'
+        Need 12 'Turn off background recording in Medal or Overwolf unless you use it.'
+    }
+    if (& $has @('MSIAfterburner')) { Info 'MSI Afterburner: keep its hardware polling period at 1000 ms or more; short periods with power monitoring cause stutter every few seconds.' }
+
+    # Summary, biggest gain first
+    if (-not $cpu -and -not $mods.Count) { Info 'Windows did not report the hardware details, so these checks could not run.'; return }
+    if ($script:fix.Count) {
+        Say ''
+        Say '  Only you can change these, biggest gain first:'
+        $i = 0
+        $seen = @{}
+        foreach ($x in @($script:fix | Sort-Object Rank)) {
+            if ($seen.ContainsKey($x.Text)) { continue }
+            $seen[$x.Text] = 1
+            $i++
+            Say ('   ' + $i + '. ' + $x.Text)
+        }
+    } else {
+        Ok 'Nothing found in the hardware or setup that holds back FPS.'
+    }
+}
+
+default { Fail ('Unknown step: ' + $env:GT_STEP) }
+}
+#GTPS
