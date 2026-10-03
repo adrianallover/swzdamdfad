@@ -21,13 +21,14 @@ rem  it and how to undo it.
 rem ==========================================================================
 
 rem ---- Options -------------------------------------------------------------
-rem  Change a value below to change what the script does.
+rem  Nothing needs changing: every value below is already the setting with
+rem  the most benefit for FPS and 1 percent lows. Each option also takes keep,
+rem  which leaves that part of Windows as it is.
 rem
-rem  Applied by default:
 rem  VBS_MODE              auto, disable or keep
 rem      Virtualization-Based Security and Memory Integrity. auto turns them
-rem      off unless FACEIT or Riot Vanguard is installed, because both can
-rem      refuse to run without them.
+rem      off unless FACEIT or Riot Vanguard is installed, because both refuse
+rem      to run without them.
 rem  DIAGTRACK_MODE        auto, disable or keep
 rem      The Connected User Experiences and Telemetry service. auto turns it
 rem      off unless Xbox Gaming Services is installed, because Xbox
@@ -38,40 +39,39 @@ rem      percent either way and differs per game, so if your 1 percent lows
 rem      got worse, test once with off. DLSS frame generation needs it on.
 rem  AUTOHDR_MODE          off or keep
 rem      Auto HDR costs 2 to 3 percent of GPU time while it is active.
-rem  POWERTHROTTLING_MODE  auto, off or keep
-rem      Power throttling of background processes. auto turns it off on
-rem      desktops with hybrid P-core and E-core CPUs, and keeps it on laptops.
+rem  POWERTHROTTLING_MODE  off, auto or keep
+rem      Power throttling of background processes. auto applies it only to
+rem      desktops with hybrid P-core and E-core CPUs.
 rem  REFRESH_MODE          max or keep
-rem      Sets each monitor to the highest refresh rate it offers at its
-rem      current resolution. You confirm the new rate; without an answer
-rem      within 15 seconds it switches back by itself.
+rem      Each monitor at the highest refresh rate it offers at its current
+rem      resolution. You confirm the new rate; without an answer within 15
+rem      seconds it switches back by itself.
 rem  VRR_MODE              on or keep
-rem      Lets DX10 and DX11 games without their own support use G-SYNC or
-rem      FreeSync, so frame rate drops below the refresh rate do not judder.
+rem      Lets DX11 games without their own support use G-SYNC or FreeSync,
+rem      so frame rate drops below the refresh rate do not judder.
 rem  GPU_PREFERENCE_MODE   auto or keep
-rem      On PCs with two GPUs, sets every installed game to the
+rem      On PCs with two GPUs, every installed game goes to the
 rem      high-performance GPU in Windows graphics settings.
 rem  NVIDIA_MODE           fix or keep
-rem      Sets NVIDIA Control Panel settings that cost FPS or cause stutter
-rem      back to NVIDIA's defaults: shader cache off or smaller than the
-rem      driver default, threaded optimization forced off, integrated
-rem      graphics preferred.
+rem      NVIDIA global settings that cost FPS or cause stutter go back to
+rem      NVIDIA's defaults: shader cache off or smaller than the driver
+rem      default, threaded optimization forced off, integrated graphics
+rem      preferred, a Max Frame Rate well below the refresh rate.
 rem  AMD_MODE              fix or keep
-rem      Sets the AMD Software shader cache back to its default, AMD
-rem      optimized, when it was turned off.
+rem      AMD shader cache back on when it was off, Radeon Chill off.
 rem  SHADER_CACHE_MODE     protect or keep
 rem      Stops Windows' automatic disk cleanup from deleting the DirectX
 rem      shader cache, after which games compile shaders again and stutter.
 rem
-rem  Off by default, because they cost security or break something:
-rem  CPU_MITIGATIONS_MODE        keep or off
-rem      Spectre v2 and Meltdown mitigations. Gains are mainly on Intel CPUs
-rem      from before 2019.
-rem  DEFENDER_EXCLUSIONS_MODE    keep or add
+rem  On by default for the most FPS, with a cost README.md describes:
+rem  CPU_MITIGATIONS_MODE        off or keep
+rem      Spectre v2 and Meltdown mitigations. About 1 percent on CPUs from
+rem      2019 on, about 4 percent on older Intel CPUs. Reopens those attacks.
+rem  DEFENDER_EXCLUSIONS_MODE    add or keep
 rem      Excludes game libraries and shader caches from real-time scanning.
-rem  STORE_APPS_BACKGROUND_MODE  keep or off
+rem  STORE_APPS_BACKGROUND_MODE  off or keep
 rem      Stops Microsoft Store apps from running in the background.
-rem  HYPERVISOR_MODE             keep or off
+rem  HYPERVISOR_MODE             off or keep
 rem      Stops the hypervisor from loading. WSL2, Hyper-V, Windows Sandbox
 rem      and Docker stop working until it is set back.
 rem --------------------------------------------------------------------------
@@ -79,17 +79,17 @@ set "VBS_MODE=auto"
 set "DIAGTRACK_MODE=auto"
 set "HAGS_MODE=on"
 set "AUTOHDR_MODE=off"
-set "POWERTHROTTLING_MODE=auto"
+set "POWERTHROTTLING_MODE=off"
 set "REFRESH_MODE=max"
 set "VRR_MODE=on"
 set "GPU_PREFERENCE_MODE=auto"
 set "NVIDIA_MODE=fix"
 set "AMD_MODE=fix"
 set "SHADER_CACHE_MODE=protect"
-set "CPU_MITIGATIONS_MODE=keep"
-set "DEFENDER_EXCLUSIONS_MODE=keep"
-set "STORE_APPS_BACKGROUND_MODE=keep"
-set "HYPERVISOR_MODE=keep"
+set "CPU_MITIGATIONS_MODE=off"
+set "DEFENDER_EXCLUSIONS_MODE=add"
+set "STORE_APPS_BACKGROUND_MODE=off"
+set "HYPERVISOR_MODE=off"
 
 rem A user variable named ERRORLEVEL would hide the real exit codes.
 set "ERRORLEVEL="
@@ -258,13 +258,6 @@ if /i "%POWERTHROTTLING_MODE%"=="auto" if "%GT_HYBRID%"=="1" if "%GT_BATTERY%"==
 set "MEM_TXT=pagefile checked"
 if %GT_RAMGB% GEQ 16 set "MEM_TXT=page combining off, pagefile checked"
 
-set "OPT_TXT="
-if /i "%CPU_MITIGATIONS_MODE%"=="off" set "OPT_TXT=%OPT_TXT%, Spectre/Meltdown mitigations off"
-if /i "%DEFENDER_EXCLUSIONS_MODE%"=="add" set "OPT_TXT=%OPT_TXT%, Defender game exclusions"
-if /i "%STORE_APPS_BACKGROUND_MODE%"=="off" set "OPT_TXT=%OPT_TXT%, Store apps in background off"
-if /i "%HYPERVISOR_MODE%"=="off" set "OPT_TXT=%OPT_TXT%, hypervisor off"
-if not defined OPT_TXT set "OPT_TXT=, none enabled - see the options at the top of GameTune.bat"
-set "OPT_TXT=%OPT_TXT:~2%"
 
 rem ---- Summary and confirmation ---------------------------------------------
 set "SH_ED=%GT_EDITION%"
@@ -297,13 +290,13 @@ echo   - Game Mode: on.  Game Bar background recording: off
 if /i "%HAGS_MODE%"=="on" echo   - Hardware-accelerated GPU scheduling: on
 if /i "%HAGS_MODE%"=="off" echo   - Hardware-accelerated GPU scheduling: off, for an A/B test
 if %GT_BUILD% GEQ 22621 echo   - Optimizations for windowed games: on
-if /i not "%VRR_MODE%"=="keep" echo   - Variable refresh rate for games without their own support: on
+if /i "%VRR_MODE%"=="on" echo   - Variable refresh rate for games without their own support: on
 if /i not "%AUTOHDR_MODE%"=="keep" if %GT_BUILD% GEQ 22000 echo   - Auto HDR: off
-if /i not "%REFRESH_MODE%"=="keep" echo   - Monitors: highest refresh rate, kept only when you confirm it
-if /i not "%GPU_PREFERENCE_MODE%"=="keep" echo   - Installed games: high-performance GPU, on PCs with two GPUs
-if defined HAS_NV if /i not "%NVIDIA_MODE%"=="keep" echo   - NVIDIA settings that cost FPS or cause stutter: back to defaults
-if defined HAS_AMD if /i not "%AMD_MODE%"=="keep" echo   - AMD shader cache: back on, if it was turned off
-if /i not "%SHADER_CACHE_MODE%"=="keep" echo   - DirectX shader cache: kept out of automatic disk cleanup
+if /i "%REFRESH_MODE%"=="max" echo   - Monitors: highest refresh rate, kept only when you confirm it
+if /i "%GPU_PREFERENCE_MODE%"=="auto" echo   - Installed games: high-performance GPU, on PCs with two GPUs
+if defined HAS_NV if /i "%NVIDIA_MODE%"=="fix" echo   - NVIDIA settings that cost FPS or cause stutter: back to defaults
+if defined HAS_AMD if /i "%AMD_MODE%"=="fix" echo   - AMD shader cache back on if it was off, Radeon Chill off
+if /i "%SHADER_CACHE_MODE%"=="protect" echo   - DirectX shader cache: kept out of automatic disk cleanup
 echo   - Fault Tolerant Heap: off, per-game list cleared
 echo   - Memory: %MEM_TXT%
 echo   - Forced HPET clock: removed, if present
@@ -314,7 +307,10 @@ if defined DO_DIAG echo   - Windows telemetry: DiagTrack, collectors and apprais
 if not defined DO_DIAG echo   - Windows telemetry: collectors and tasks off. DiagTrack unchanged, %DIAG_WHY%
 echo   - NVIDIA, AMD, Intel and Office telemetry: off where installed
 echo   - SSD TRIM: checked
-echo   - Optional extras: %OPT_TXT%
+if /i "%STORE_APPS_BACKGROUND_MODE%"=="off" echo   - Store apps running in the background: off
+if /i "%CPU_MITIGATIONS_MODE%"=="off" echo   - Spectre v2 and Meltdown mitigations: off, a security cost - see README.md
+if /i "%DEFENDER_EXCLUSIONS_MODE%"=="add" echo   - Defender: game libraries and shader caches excluded from real-time scanning
+if /i "%HYPERVISOR_MODE%"=="off" if not defined AC_NEEDVBS echo   - Hypervisor: off. WSL2, Hyper-V, Windows Sandbox and Docker stop working
 echo   - Last: a list of hardware and setup problems only you can fix
 echo.
 echo  A restart is needed afterwards. README.md shows how to undo each change.
@@ -495,6 +491,7 @@ rem with judder or tearing. Only has an effect on a VRR monitor with G-SYNC
 rem or FreeSync turned on in the graphics driver.
 call :hdr "Variable refresh rate for games without their own support"
 if /i "%VRR_MODE%"=="keep" echo   [SKIP] VRR_MODE is set to keep.& exit /b 0
+if /i not "%VRR_MODE%"=="on" echo   [SKIP] VRR_MODE must be on or keep.& exit /b 0
 call :dx_read
 call :dx_get VRROptimizeEnable V1
 if "%V1%"=="1" echo   [ OK ] Already on.& exit /b 0
@@ -531,6 +528,7 @@ rem rate then holds games at 60 FPS, and each frame reaches the screen later.
 rem The new rate is kept only when you confirm it within 15 seconds.
 call :hdr "Monitor refresh rate"
 if /i "%REFRESH_MODE%"=="keep" echo   [SKIP] REFRESH_MODE is set to keep.& exit /b 0
+if /i not "%REFRESH_MODE%"=="max" echo   [SKIP] REFRESH_MODE must be max or keep.& exit /b 0
 if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
 call :ps refresh
 exit /b 0
@@ -544,6 +542,7 @@ rem NVIDIA and AMD ones, so every installed game is set to the
 rem high-performance GPU there. A program set to power saving is kept.
 call :hdr "Installed games on the high-performance GPU"
 if /i "%GPU_PREFERENCE_MODE%"=="keep" echo   [SKIP] GPU_PREFERENCE_MODE is set to keep.& exit /b 0
+if /i not "%GPU_PREFERENCE_MODE%"=="auto" echo   [SKIP] GPU_PREFERENCE_MODE must be auto or keep.& exit /b 0
 if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
 call :ps gpupref
 exit /b 0
@@ -556,6 +555,7 @@ rem than 4 GB, threaded optimization forced off, integrated graphics
 rem preferred. Each goes back to NVIDIA's default; game profiles are kept.
 call :hdr "NVIDIA driver settings"
 if /i "%NVIDIA_MODE%"=="keep" echo   [SKIP] NVIDIA_MODE is set to keep.& exit /b 0
+if /i not "%NVIDIA_MODE%"=="fix" echo   [SKIP] NVIDIA_MODE must be fix or keep.& exit /b 0
 if not defined HAS_NV echo   [SKIP] No NVIDIA graphics card.& exit /b 0
 if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
 call :ps nvidia
@@ -569,6 +569,7 @@ rem shaders again at each start, which stutters, so it goes back to the
 rem default, AMD optimized. Nothing else in AMD Software is changed.
 call :hdr "AMD driver settings"
 if /i "%AMD_MODE%"=="keep" echo   [SKIP] AMD_MODE is set to keep.& exit /b 0
+if /i not "%AMD_MODE%"=="fix" echo   [SKIP] AMD_MODE must be fix or keep.& exit /b 0
 if not defined HAS_AMD echo   [SKIP] No AMD Radeon graphics.& exit /b 0
 if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
 call :ps amd
@@ -584,6 +585,7 @@ rem in both the 64-bit and the 32-bit registry view; 0 in both leaves the
 rem cache out of it. Disk Cleanup can still clear it by hand.
 call :hdr "DirectX shader cache"
 if /i "%SHADER_CACHE_MODE%"=="keep" echo   [SKIP] SHADER_CACHE_MODE is set to keep.& exit /b 0
+if /i not "%SHADER_CACHE_MODE%"=="protect" echo   [SKIP] SHADER_CACHE_MODE must be protect or keep.& exit /b 0
 set "SC_N=0"
 set "SC_SET=0"
 set "SC_FAIL="
@@ -698,7 +700,7 @@ call :getdw "%PT%" PowerThrottlingOff V1
 if "%V1%"=="1" echo   [ OK ] Already off.& exit /b 0
 reg add "%PT%" /v PowerThrottlingOff /t REG_DWORD /d 1 /f >nul 2>&1
 if not "%errorlevel%"=="0" echo   [FAIL] Could not write PowerThrottlingOff.& exit /b 0
-echo   [ OK ] Turned off: game helpers and games on a second monitor keep P-cores and full clocks.
+echo   [ OK ] Turned off: game helpers, shader compilers and games on a second monitor keep full clocks.
 exit /b 0
 
 
@@ -752,7 +754,7 @@ reg add "%EDGEP%" /v BackgroundModeEnabled /t REG_DWORD /d 0 /f >nul 2>&1
 if not "%errorlevel%"=="0" set "EDGE_RC=1"
 if "%EDGE_RC%"=="0" (echo   [ OK ] Edge startup boost and background mode: off. Edge now exits with its last window.) else (echo   [FAIL] Could not write the Edge policies.)
 :bg_store
-if /i not "%STORE_APPS_BACKGROUND_MODE%"=="off" echo   [SKIP] Store apps in the background: unchanged. Optional, see STORE_APPS_BACKGROUND_MODE.& exit /b 0
+if /i not "%STORE_APPS_BACKGROUND_MODE%"=="off" echo   [SKIP] Store apps in the background: unchanged, STORE_APPS_BACKGROUND_MODE is set to keep.& exit /b 0
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" /v LetAppsRunInBackground /t REG_DWORD /d 2 /f >nul 2>&1
 if not "%errorlevel%"=="0" echo   [FAIL] Could not write the background apps policy.& exit /b 0
 echo   [ OK ] Store apps can no longer run in the background; their notifications stop while they are closed.
@@ -856,11 +858,11 @@ exit /b 0
 
 
 :step_mitigations
-rem Optional. Microsoft's documented override for the Spectre v2 and Meltdown
+rem Microsoft's documented override for the Spectre v2 and Meltdown
 rem mitigations. CPUs from 2019 on have hardware fixes and gain about 1
 rem percent; older Intel CPUs lose around 4 percent in frametimes to them.
-call :hdr "Spectre and Meltdown mitigations - optional"
-if /i not "%CPU_MITIGATIONS_MODE%"=="off" echo   [SKIP] Unchanged. Optional: set CPU_MITIGATIONS_MODE=off, see README.md.& exit /b 0
+call :hdr "Spectre and Meltdown mitigations"
+if /i not "%CPU_MITIGATIONS_MODE%"=="off" echo   [SKIP] CPU_MITIGATIONS_MODE is set to keep.& exit /b 0
 set "MMK=HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
 reg add "%MMK%" /v FeatureSettingsOverride /t REG_DWORD /d 3 /f >nul 2>&1
 set "MIT_RC=%errorlevel%"
@@ -873,12 +875,12 @@ exit /b 0
 
 
 :step_defender
-rem Optional. Real-time scanning inspects every file a game opens and every
+rem Real-time scanning inspects every file a game opens and every
 rem shader-cache file a driver writes, which lengthens loads and can stutter
 rem asset streaming. Only launcher-defined libraries, the launchers' default
 rem game folders and the GPU shader caches are excluded.
-call :hdr "Microsoft Defender exclusions for games - optional"
-if /i not "%DEFENDER_EXCLUSIONS_MODE%"=="add" echo   [SKIP] Unchanged. Optional: set DEFENDER_EXCLUSIONS_MODE=add, see README.md.& exit /b 0
+call :hdr "Microsoft Defender exclusions for games"
+if /i not "%DEFENDER_EXCLUSIONS_MODE%"=="add" echo   [SKIP] DEFENDER_EXCLUSIONS_MODE is set to keep.& exit /b 0
 if not defined PS echo   [SKIP] Windows PowerShell is not available.& exit /b 0
 set "Q=$ErrorActionPreference='SilentlyContinue';"
 set "Q=%Q%$st=Get-MpComputerStatus;"
@@ -906,10 +908,10 @@ exit /b 0
 
 
 :step_hypervisor
-rem Optional. Hyper-V, Virtual Machine Platform (WSL2), Sandbox and Docker
+rem Hyper-V, Virtual Machine Platform (WSL2), Sandbox and Docker
 rem keep the hypervisor loaded even with VBS off, which costs about 1 percent
 rem in CPU-bound games.
-call :hdr "Hypervisor - optional"
+call :hdr "Hypervisor"
 set "HV_FEAT="
 for %%S in (vmms vmcompute) do (reg query "%SVC%\%%S" >nul 2>&1 & if not errorlevel 1 set "HV_FEAT=1")
 if /i "%HYPERVISOR_MODE%"=="off" goto :hv_off
@@ -917,7 +919,7 @@ if not defined HV_FEAT echo   [ OK ] No Hyper-V or Virtual Machine Platform inst
 bcdedit /enum {current} 2>nul | findstr /i /c:"hypervisorlaunchtype" | findstr /i /c:"Auto" >nul
 if not "%errorlevel%"=="0" echo   [ OK ] The hypervisor is not set to load at boot.& exit /b 0
 echo   [INFO] Hyper-V / Virtual Machine Platform keeps the hypervisor running, about 1%% in CPU-bound games.
-echo          Kept because WSL2, Docker and VMs need it. Optional: set HYPERVISOR_MODE=off.
+echo          Kept, because HYPERVISOR_MODE is set to keep.
 exit /b 0
 :hv_off
 if defined AC_NEEDVBS if /i not "%VBS_MODE%"=="disable" echo   [SKIP] %GT_AC% needs VBS, and VBS needs the hypervisor.& exit /b 0
@@ -1151,10 +1153,13 @@ namespace GameTune
         static extern bool EnumDisplaySettingsW(string device, int mode, ref DevMode dm);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         static extern int ChangeDisplaySettingsExW(string device, ref DevMode dm, IntPtr hwnd, uint flags, IntPtr param);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "ChangeDisplaySettingsExW")]
+        static extern int ChangeDisplaySettingsToSaved(string device, IntPtr dm, IntPtr hwnd, uint flags, IntPtr param);
 
         const uint Interlaced = 2;
         const uint CdsUpdateRegistry = 1;
         const uint CdsTest = 2;
+        const uint CdsNoReset = 0x10000000;
         // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
         const uint ModeFields = 0x00040000 | 0x00080000 | 0x00100000 | 0x00400000;
 
@@ -1212,11 +1217,13 @@ namespace GameTune
             return list.ToArray();
         }
 
-        // Switches a monitor to hz at its current resolution and colour depth.
-        // test = only ask the driver whether the mode would work. Returns the
-        // DISP_CHANGE code (0 = done, 1 = needs a restart), -100 when there is
-        // no such mode, -101 when the monitor cannot be read.
-        public static int Apply(string device, int hz, bool test)
+        // Sets a monitor to hz at its current resolution and colour depth.
+        // mode 0 = only ask the driver whether the mode would work; 1 = switch
+        // for this session only, so a restart or Reset undoes it; 2 = save the
+        // mode, already active, as the one Windows uses from now on. Returns
+        // the DISP_CHANGE code (0 = done, 1 = needs a restart), -100 when there
+        // is no such mode, -101 when the monitor cannot be read.
+        public static int Apply(string device, int hz, int mode)
         {
             try
             {
@@ -1228,10 +1235,18 @@ namespace GameTune
                     if (!EnumDisplaySettingsW(device, m, ref dm)) break;
                     if (!Same(dm, cur) || (dm.dmDisplayFlags & Interlaced) != 0 || (int)dm.dmDisplayFrequency != hz) continue;
                     dm.dmFields = ModeFields;
-                    return ChangeDisplaySettingsExW(device, ref dm, IntPtr.Zero, test ? CdsTest : CdsUpdateRegistry, IntPtr.Zero);
+                    uint flags = mode == 0 ? CdsTest : mode == 1 ? 0u : CdsUpdateRegistry | CdsNoReset;
+                    return ChangeDisplaySettingsExW(device, ref dm, IntPtr.Zero, flags, IntPtr.Zero);
                 }
                 return -100;
             }
+            catch (Exception) { return -101; }
+        }
+
+        // Back to the mode saved for the monitor, undoing a session-only switch.
+        public static int Reset(string device)
+        {
+            try { return ChangeDisplaySettingsToSaved(device, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero); }
             catch (Exception) { return -101; }
         }
     }
@@ -1600,9 +1615,11 @@ function Get-DisplayAdapterKeys {
 # driver version (32.0.15.9186); 0 when unknown.
 function Get-NvidiaBranch {
     $vc = @(Get-CimInstance Win32_VideoController | Where-Object { [string]$_.Name -match 'NVIDIA' })[0]
-    $d = ([string]$vc.DriverVersion) -replace '\D', ''
-    if ($d.Length -lt 6) { return 0 }
-    [int]$d.Substring($d.Length - 5, 3)
+    $p = ([string]$vc.DriverVersion).Split('.')
+    if ($p.Count -lt 4 -or $p[2] -notmatch '^\d+$' -or $p[3] -notmatch '^\d+$') { return 0 }
+    # The last digit of the third field and the fourth field, padded to four
+    # digits because Windows drops its leading zeros (600.12 is 32.0.16.12).
+    [int](($p[2].Substring($p[2].Length - 1) + $p[3].PadLeft(4, '0')).Substring(0, 3))
 }
 
 function Format-MB([double]$mb) {
@@ -1649,7 +1666,7 @@ function Get-GpuRanking {
 # holds the EDID. MaxHz comes from the Display Range Limits descriptor (tag
 # 0xFD); bit 1 of its byte 4 adds 255 Hz for monitors above 255 Hz.
 function Read-MonitorEdid([string]$path) {
-    $r = [pscustomobject]@{ Name = ''; MaxHz = 0 }
+    $r = [pscustomobject]@{ Name = ''; MaxHz = 0; MaxClockMHz = 0 }
     if ($path -notmatch '^\\\\\?\\DISPLAY#([^#]+)#([^#]+)#') { return $r }
     $b = Get-Reg ('HKLM:\SYSTEM\CurrentControlSet\Enum\DISPLAY\' + $Matches[1] + '\' + $Matches[2] + '\Device Parameters') 'EDID'
     if ($b -isnot [byte[]] -or $b.Count -lt 128) { return $r }
@@ -1663,30 +1680,40 @@ function Read-MonitorEdid([string]$path) {
             $max = [int]$b[$o + 6]
             if ($b[$o + 4] -band 2) { $max += 255 }
             $r.MaxHz = $max
+            if ($b[$o + 9] -gt 0 -and $b[$o + 9] -lt 255) { $r.MaxClockMHz = 10 * [int]$b[$o + 9] }
         }
     }
     $r
 }
 
-# Asks a yes/no question that answers itself with No after $sec seconds, for
-# changes that must undo themselves when nobody can see the screen. Keys
-# pressed before the question are discarded; without a console to read from,
-# the answer is No.
-function Wait-Yes([int]$sec, [string]$prompt) {
-    [Console]::Out.Write($prompt)
+# The highest refresh rate the monitor's EDID allows at a resolution: its
+# maximum vertical rate, limited by its maximum pixel clock with reduced
+# blanking (160 pixels per line, about 5 percent of the lines). A monitor
+# whose high rate exists only at lower resolutions then counts as 60 Hz.
+function Get-EdidHzAt($e, [int]$w, [int]$h) {
+    if ($e.MaxHz -le 0) { return 0 }
+    if ($e.MaxClockMHz -le 0 -or $w -le 0 -or $h -le 0) { return $e.MaxHz }
+    [int][Math]::Min($e.MaxHz, [Math]::Floor($e.MaxClockMHz * 1e6 / (($w + 160) * $h * 1.05)))
+}
+
+# Waits up to $sec seconds for Y or N and answers No when time runs out,
+# for changes that must undo themselves when nobody can see the screen.
+# It prints nothing, so a console paused by a text selection cannot hold up
+# the undo. Keys pressed before the question are discarded; without a
+# console to read from, the answer is No.
+function Wait-Yes([int]$sec) {
     try {
         while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }
         $end = [DateTime]::UtcNow.AddSeconds($sec)
         while ([DateTime]::UtcNow -lt $end) {
             if ([Console]::KeyAvailable) {
                 $k = [string][Console]::ReadKey($true).KeyChar
-                if ($k -eq 'y') { Say 'Y'; return $true }
-                if ($k -eq 'n') { Say 'N'; return $false }
+                if ($k -eq 'y') { return $true }
+                if ($k -eq 'n') { return $false }
             }
             Start-Sleep -Milliseconds 100
         }
     } catch { }
-    Say 'N'
     $false
 }
 
@@ -1739,7 +1766,7 @@ function Get-DriveKind([string]$path) {
 # ---- Installed games -------------------------------------------------------
 # Programs in game folders that never render the game: installers, runtimes,
 # crash reporters, anti-cheat services, launchers, updaters and web helpers.
-$script:SkipExe = '^(unins.*|.*setup.*|.*install.*|vc_?redist.*|dxwebsetup|dotnet.*|ndp\d.*|oalinst|physx.*|.*prereq.*|.*crash.*|.*report.*|bugsplat.*|sentry.*|easyanticheat.*|start_protected_game|beservice.*|battleye.*|.*launcher.*|.*updater.*|.*update.*|.*patcher.*|.*helper.*|cef.*|.*webview.*|qtwebengineprocess|7z.*|jar|jarsigner|javac|javadoc|javap|jcmd|jconsole|jdb|jdeps|jfr|jhsdb|jimage|jinfo|jlink|jmap|jmod|jpackage|jps|jrunscript|jshell|jstack|jstat|jstatd|jwebserver|keytool|kinit|klist|ktab|orbd|pack200|unpack200|policytool|rmic|rmid|rmiregistry|serialver|servertool|tnameserv|jabswitch|jaccess.*|obs32|obs64|wallpaper32|wallpaper64|losslessscaling|vrserver|vrcompositor|vrmonitor)\.exe$'
+$script:SkipExe = '^(unins.*|.*setup.*|.*install.*|vc_?redist.*|dxwebsetup|dotnet.*|ndp\d.*|oalinst|physx.*|.*prereq.*|.*crash.*|.*report.*|bugsplat.*|sentry.*|easyanticheat.*|start_protected_game|beservice.*|battleye.*|.*launcher.*|.*updater.*|.*update.*|.*patcher.*|.*helper.*|cef.*|.*webview.*|qtwebengineprocess|7z.*|jar|jarsigner|javac|javadoc|javap|jcmd|jconsole|jdb|jdeps|jfr|jhsdb|jimage|jinfo|jlink|jmap|jmod|jpackage|jps|jrunscript|jshell|jstack|jstat|jstatd|jwebserver|keytool|kinit|klist|ktab|orbd|pack200|unpack200|policytool|rmic|rmid|rmiregistry|serialver|servertool|tnameserv|jabswitch|jaccess.*|obs32|obs64|wallpaper32|wallpaper64|losslessscaling|vrserver|vrcompositor|vrmonitor|steam|steamservice|battle\.net|wgc|hyp|riotclientservices|riotclientux|eadesktop|eabackgroundservice|origin|galaxyclient|upc|chrome|msedge|firefox|opera|brave|discord|spotify)\.exe$'
 $script:SkipDir = '^(_commonredist|commonredist|redist|redists|redistributable|redistributables|directx|dxsetup|prerequisites|prereq|prereqs|__installer|_installer|installer|installers|support|easyanticheat|easyanticheat_eos|battleye|vcredist|dotnetfx|physx|thirdparty|extras|crashreportclient|crashpad|uninstall)$'
 # Steam tools that must keep the GPU they run on: Steamworks redistributables,
 # Wallpaper Engine, Lossless Scaling, SteamVR and OBS Studio.
@@ -1784,7 +1811,12 @@ function Find-Games {
         if ($seenDir.ContainsKey($k)) { return }
         $seenDir[$k] = 1
         $exes = @(Get-FolderExes $dir $clock)
-        foreach ($x in $extra) { if ($x -and (Test-Path -LiteralPath $x -PathType Leaf)) { $exes += $x } }
+        foreach ($x in $extra) {
+            if (-not $x -or -not (Test-Path -LiteralPath $x -PathType Leaf)) { continue }
+            # Full path with the system's separators: Epic writes forward slashes.
+            $x = [IO.Path]::GetFullPath($x)
+            if ((Split-Path -Leaf $x) -notmatch $script:SkipExe) { $exes += $x }
+        }
         $exes = @($exes | Sort-Object -Unique)
         if ($exes.Count) { $games.Add([pscustomobject]@{ Name = $(if ($name) { $name } else { Split-Path -Leaf $dir }); Exes = $exes }) }
     }
@@ -1897,35 +1929,39 @@ switch ($env:GT_STEP) {
         $label = 'Monitor ' + $n + $(if ($tags.Count) { ' (' + ($tags -join ', ') + ')' })
         $res = '{0} x {1}' -f $d.Width, $d.Height
         if ($d.MaxHz -gt $d.Hz + 1) {
-            $test = [GameTune.Displays]::Apply($d.Device, $d.MaxHz, $true)
+            $test = [GameTune.Displays]::Apply($d.Device, $d.MaxHz, 0)
             if ($test -ne 0) {
                 Warn ($label + ': ' + $d.Hz + ' Hz kept. It lists ' + $d.MaxHz + ' Hz, but the driver refused it (code ' + $test + ').')
                 continue
             }
-            $rc = [GameTune.Displays]::Apply($d.Device, $d.MaxHz, $false)
-            if ($rc -ne 0) {
-                $back = [GameTune.Displays]::Apply($d.Device, $d.Hz, $false)
-                Fail ($label + ': could not switch to ' + $d.MaxHz + ' Hz (code ' + $rc + ')' + $(if ($back -eq 0) { '; it stays at ' + $d.Hz + ' Hz.' } else { '.' }))
-                continue
+            # The new rate is only switched for this session, so a restart
+            # brings the old one back whatever happens. It is saved only after
+            # Y. The finally block switches back on No, on timeout, and when
+            # the window is stopped with Ctrl+C, before anything is printed.
+            Say ('  ' + $label + ': switching from ' + $d.Hz + ' Hz to ' + $d.MaxHz + ' Hz. The screen may go dark for a moment.')
+            Say '  If the picture is fine, press Y within 15 seconds to keep it. Without an answer it switches back.'
+            $rc = -101
+            $keep = $false
+            try {
+                $rc = [GameTune.Displays]::Apply($d.Device, $d.MaxHz, 1)
+                if ($rc -eq 0) { $keep = Wait-Yes 15 }
+            } finally {
+                if (-not $keep) { [void][GameTune.Displays]::Reset($d.Device) }
             }
-            Say ('  ' + $label + ' now runs at ' + $d.MaxHz + ' Hz instead of ' + $d.Hz + ' Hz.')
-            if (Wait-Yes 15 '  Is the picture fine? Y keeps it; without an answer it switches back in 15 seconds. [Y/N] ') {
-                Ok ($label + ': ' + $res + ' at ' + $d.MaxHz + ' Hz instead of ' + $d.Hz + ' Hz.')
-                $d.Hz = $d.MaxHz
-            } else {
-                $back = [GameTune.Displays]::Apply($d.Device, $d.Hz, $false)
-                if ($back -eq 0) { Info ($label + ': switched back to ' + $d.Hz + ' Hz.') }
-                else { Fail ($label + ': could not switch back (code ' + $back + '). Settings > System > Display > Advanced display sets the refresh rate.') }
-                continue
-            }
+            if ($rc -ne 0) { Fail ($label + ': could not switch to ' + $d.MaxHz + ' Hz (code ' + $rc + '); it stays at ' + $d.Hz + ' Hz.'); continue }
+            if (-not $keep) { Info ($label + ': switched back to ' + $d.Hz + ' Hz.'); continue }
+            $sv = [GameTune.Displays]::Apply($d.Device, $d.MaxHz, 2)
+            if ($sv -eq 0) { Ok ($label + ': ' + $res + ' at ' + $d.MaxHz + ' Hz instead of ' + $d.Hz + ' Hz.'); $d.Hz = $d.MaxHz }
+            else { Warn ($label + ': runs at ' + $d.MaxHz + ' Hz now, but Windows could not save it (code ' + $sv + '): after a restart it is back at ' + $d.Hz + ' Hz.') }
         } else {
             Ok ($label + ': ' + $res + ' at ' + $d.Hz + ' Hz, the highest it offers at this resolution.')
         }
         # The monitor reports a high refresh rate, but this connection carries
         # only about 60 Hz at this resolution: an HDMI 1.4 port or cable, a
         # DisplayPort-to-HDMI adapter, or a motherboard port.
-        if ($e.MaxHz -ge 100 -and $d.MaxHz -le 75) {
-            Warn ($label + ' can do up to ' + $e.MaxHz + ' Hz, but this connection only carries ' + $d.MaxHz + ' Hz at ' + $res + '.')
+        $edidHz = Get-EdidHzAt $e $d.Width $d.Height
+        if ($edidHz -ge 100 -and $d.MaxHz -le 75) {
+            Warn ($label + ' can do up to ' + $edidHz + ' Hz at ' + $res + ', but this connection only carries ' + $d.MaxHz + ' Hz.')
             More 'Use DisplayPort on the graphics card, or an HDMI 2.0 port and cable (HDMI 2.1 for 4K above 60 Hz).'
         }
     }
@@ -1949,14 +1985,15 @@ switch ($env:GT_STEP) {
     $set = New-Object 'System.Collections.Generic.List[string]'
     $had = 0
     $fail = 0
-    $saving = New-Object 'System.Collections.Generic.List[string]'
+    $moved = New-Object 'System.Collections.Generic.List[string]'
     foreach ($g in $games) {
         $changed = $false
         foreach ($x in $g.Exes) {
             $t = Split-DxEntries ([string]$key.GetValue($x, ''))
             if ([string]$t['GpuPreference'] -eq '2') { $had++; continue }
-            # 1 = power saving: someone chose it for this program, so it stays.
-            if ([string]$t['GpuPreference'] -eq '1') { if (-not $saving.Contains($g.Name)) { $saving.Add($g.Name) }; continue }
+            # 1 = power saving, 0 = let Windows decide: both can leave a game on
+            # the integrated GPU, so they are changed too and reported.
+            if ($t.Contains('GpuPreference') -and -not $moved.Contains($g.Name)) { $moved.Add($g.Name) }
             $t['GpuPreference'] = '2'
             $v = (@($t.Keys | ForEach-Object { $_ + '=' + $t[$_] }) -join ';') + ';'
             try { $key.SetValue($x, $v, [Microsoft.Win32.RegistryValueKind]::String); $changed = $true } catch { $fail++ }
@@ -1972,7 +2009,7 @@ switch ($env:GT_STEP) {
     }
     if ($had) { Ok ([string]$had + ' game program(s) were already set to it.') }
     if ($fail) { Fail ([string]$fail + ' program(s) could not be set.') }
-    foreach ($s in $saving) { Warn ($s + ' is set to the power-saving GPU in Windows graphics settings. Kept, as someone chose it; Settings > System > Display > Graphics changes it.') }
+    if ($moved.Count) { Info ('Were set to power saving or "Let Windows decide" before: ' + (@($moved | Sort-Object -Unique) -join ', ') + '.') }
     if ($found.TimedOut) { Info 'The search stopped after 90 seconds; games it did not reach keep the Windows default.' }
     Info 'Games installed later: run GameTune again, or add them under Settings > System > Display > Graphics.'
 }
@@ -2027,6 +2064,18 @@ switch ($env:GT_STEP) {
             if ($a -eq 0) { $fixed++; Ok 'Preferred graphics processor was Integrated graphics - set back to Auto-select, so games run on the NVIDIA GPU.' }
             else { Fail 'Preferred graphics processor is Integrated graphics and could not be changed.' }
         }
+        # Max Frame Rate for all games, well below the refresh rate: it caps
+        # every game. A cap just below the refresh rate is the usual G-SYNC
+        # setting and stays.
+        $f = $nv.Read(0x10835002)
+        if ($f.Found -and $f.Location -eq 0 -and $f.Value -gt 0) {
+            $main = @([GameTune.Displays]::List() | Where-Object { $_.Primary })[0]
+            $hz = if ($main) { [int]$main.Hz } else { 0 }
+            if ($hz -gt 0 -and $f.Value -lt [Math]::Floor($hz * 0.9)) {
+                if ($nv.Restore(0x10835002) -eq 0) { $fixed++; Ok ('Max Frame Rate was ' + $f.Value + ' FPS for all games, well below the ' + $hz + ' Hz refresh rate - turned off.') }
+                else { Fail ('Max Frame Rate caps all games at ' + $f.Value + ' FPS and could not be changed.') }
+            } else { Ok ('Max Frame Rate: ' + $f.Value + ' FPS' + $(if ($hz -gt 0) { ', at or just below the ' + $hz + ' Hz refresh rate' }) + '.') }
+        }
         if ($fixed) {
             $sv = $nv.Save()
             if ($sv -eq 0) { Info 'Saved. Applies to games started from now on.' }
@@ -2065,6 +2114,13 @@ switch ($env:GT_STEP) {
             } else { Ok ($a.Name + ': shader cache on.') }
         }
         if ($u) { $u.Close() }
+        # Radeon Chill for all games lowers the frame rate whenever little moves.
+        if ($null -ne $a.Chill -and [int]$a.Chill -eq 1) {
+            $k = Open-MachineKey $a.Path $true
+            try { $k.SetValue('KMD_ChillEnabled', 0, $k.GetValueKind('KMD_ChillEnabled')); Ok ($a.Name + ': Radeon Chill was on for all games - turned off.') }
+            catch { Fail ($a.Name + ': Radeon Chill is on and could not be turned off.') }
+            if ($k) { $k.Close() }
+        }
     }
     if (-not $n) { Skip 'No AMD graphics driver found.' }
 }
@@ -2205,6 +2261,7 @@ switch ($env:GT_STEP) {
         if (Test-Path -LiteralPath $smi) {
             $rows = @(& $smi '--query-gpu=name,pcie.link.width.current,pcie.link.width.max' '--format=csv,noheader,nounits' 2>$null)
             $mem = @(& $smi '-q' '-d' 'MEMORY' 2>$null)
+            $caps = @(& $smi '--query-gpu=compute_cap' '--format=csv,noheader' 2>$null)
             $bar = @()
             for ($i = 0; $i -lt $mem.Count; $i++) {
                 if ([string]$mem[$i] -notmatch 'BAR1 Memory Usage') { continue }
@@ -2226,11 +2283,19 @@ switch ($env:GT_STEP) {
                     Warn ($f[0] + ' runs on only 4 PCIe lanes: a chipset slot or a riser.')
                     Need 7 'Move the graphics card to the top x16 slot.'
                 } elseif ($cur -gt 0) { Ok ('PCIe link: x' + $cur + '.') }
-                if ($i -lt $bar.Count) {
-                    if ($bar[$i] -le 256) {
+                # Resizable BAR exists from the RTX 30 series on (compute
+                # capability 8.0 and up); on laptops only the maker can enable it.
+                $cc = 0.0
+                if ($i -lt $caps.Count) { [void][double]::TryParse(([string]$caps[$i]).Trim(), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$cc) }
+                $rebar = if ($cc -gt 0) { $cc -ge 8.0 } else { $f[0] -match 'RTX [345]\d{3}|RTX A\d{4}|RTX \d{4} Ada|RTX PRO' }
+                if ($i -lt $bar.Count -and $rebar) {
+                    if ($bar[$i] -gt 256) { Ok 'Resizable BAR: on.' }
+                    elseif (-not $laptop) {
                         Warn 'Resizable BAR is off. NVIDIA uses it in the games it has tested, about 2 to 4% faster there.'
-                        Need 13 'Turn on "Above 4G Decoding" and "Re-Size BAR" in the BIOS (needs UEFI boot with CSM off).'
-                    } else { Ok 'Resizable BAR: on.' }
+                        if ([int](Get-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control' 'PEFirmwareType') -eq 1) {
+                            Need 13 'Resizable BAR needs UEFI boot, but Windows boots in legacy BIOS mode here: convert the disk with MBR2GPT first, or Windows will not start with CSM off. Then turn on "Above 4G Decoding" and "Re-Size BAR" in the BIOS.'
+                        } else { Need 13 'Turn on "Above 4G Decoding" and "Re-Size BAR" in the BIOS (needs UEFI boot with CSM off).' }
+                    }
                 }
             }
         }
@@ -2252,7 +2317,7 @@ switch ($env:GT_STEP) {
             $f = $nv.Read(0x10835002)
             if ($f.Found -and $f.Value -gt 0) {
                 if ($mainHz -gt 0 -and $f.Value -lt [Math]::Floor($mainHz * 0.9)) {
-                    Warn ('NVIDIA Max Frame Rate caps every game at ' + $f.Value + ' FPS, well below the ' + $mainHz + ' Hz of the main monitor.')
+                    Warn ('NVIDIA Max Frame Rate still caps every game at ' + $f.Value + ' FPS, well below the ' + $mainHz + ' Hz of the main monitor.')
                     Need 5 ('Raise or turn off Max Frame Rate in NVIDIA Control Panel > Manage 3D settings (with G-SYNC, use ' + ($mainHz - 3) + ').')
                 } elseif ($mainHz -gt 0 -and $f.Value -lt $mainHz) { Ok ('NVIDIA Max Frame Rate: ' + $f.Value + ' FPS, just below the ' + $mainHz + ' Hz refresh rate.') }
                 else { Ok ('NVIDIA Max Frame Rate: ' + $f.Value + ' FPS' + $(if ($mainHz -gt 0) { ', main monitor at ' + $mainHz + ' Hz' }) + '.') }
@@ -2276,16 +2341,19 @@ switch ($env:GT_STEP) {
             $e = Read-MonitorEdid $d.MonitorPath
             $label = 'Monitor ' + $n + $(if ($e.Name) { ' (' + $e.Name + ')' })
             if ($r -and $r.Two -and $d.Adapter -eq $r.Saving.Name) {
-                if (-not $laptop) {
+                if (-not $laptop -and $d.Primary) {
                     Warn ($label + ' is plugged into the motherboard, so it runs on ' + $d.Adapter + ' and every frame from ' + $r.Fast.Name + ' is copied across first.')
                     Need 1 ('Plug ' + $label + ' into the graphics card instead of the motherboard.')
+                } elseif (-not $laptop) {
+                    Info ($label + ' is plugged into the motherboard. Fine for a second screen; games on it run slower.')
                 } elseif ($d.Primary) {
                     Info ('The laptop screen runs on ' + $d.Adapter + ', so frames from ' + $r.Fast.Name + ' are copied through it.')
                     Need 8 'If the laptop has a MUX switch or Advanced Optimus, set the GPU mode to discrete (dGPU) in the maker''s app: 10 to 17% more FPS in tests.'
                 }
             }
-            if ($e.MaxHz -ge 100 -and $d.MaxHz -le 75) {
-                Warn ($label + ' can do up to ' + $e.MaxHz + ' Hz, but its connection only carries ' + $d.MaxHz + ' Hz at this resolution.')
+            $edidHz = Get-EdidHzAt $e $d.Width $d.Height
+            if ($edidHz -ge 100 -and $d.MaxHz -le 75) {
+                Warn ($label + ' can do up to ' + $edidHz + ' Hz at this resolution, but its connection only carries ' + $d.MaxHz + ' Hz.')
                 Need 5 ('Connect ' + $label + ' by DisplayPort, or an HDMI 2.0 port and cable (HDMI 2.1 for 4K above 60 Hz), on the graphics card.')
             }
         }

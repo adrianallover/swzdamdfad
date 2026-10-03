@@ -28,7 +28,9 @@ with GameTune.
 1. Double-click `GameTune.bat`. It asks for administrator rights.
 2. Check the detected system and the list of planned changes, then press **Y**.
 3. If a monitor is switched to a higher refresh rate, press **Y** within 15 seconds to
-   keep it. Without an answer, or if the screen stays black, it switches back by itself.
+   keep it. Without an answer, if the screen stays black, or if the window is closed,
+   it switches back: the new rate is saved only after **Y**, so a restart also brings
+   the old one back.
 4. Read the list at the end: those fixes are yours to make.
 5. Restart. Most changes only take effect after a reboot.
 
@@ -38,7 +40,12 @@ new games need their GPU preference.
 
 ## Options
 
-Edit the values at the top of the script to change what it does.
+Nothing needs setting: every default is the choice with the most benefit for FPS and
+1% lows, and the script overrides existing settings that cost FPS. Two exceptions keep
+games working: VBS stays on when FACEIT or Riot Vanguard is installed, because they
+refuse to start without it, and DiagTrack stays when Xbox Gaming Services is
+installed, because achievements depend on it. Each option also takes `keep`, which
+leaves that part of Windows as it is.
 
 | Option | Default | Other values | What it controls |
 |---|---|---|---|
@@ -46,20 +53,21 @@ Edit the values at the top of the script to change what it does.
 | `DIAGTRACK_MODE` | `auto`: off unless Xbox Gaming Services is installed | `disable`, `keep` | The DiagTrack telemetry service |
 | `HAGS_MODE` | `on` | `off`, `keep` | Hardware-accelerated GPU scheduling. Its effect is a few percent either way and differs per game: if your 1% lows got worse, test once with `off` |
 | `AUTOHDR_MODE` | `off` | `keep` | Auto HDR |
-| `POWERTHROTTLING_MODE` | `auto`: off on desktops with hybrid CPUs | `off`, `keep` | Power throttling of background processes |
+| `POWERTHROTTLING_MODE` | `off` | `auto` (hybrid-CPU desktops only), `keep` | Power throttling of background processes |
 | `REFRESH_MODE` | `max` | `keep` | Each monitor at the highest refresh rate it offers at its current resolution, kept only when you confirm it |
 | `VRR_MODE` | `on` | `keep` | Windows' variable refresh rate for DX11 games without their own VRR support |
 | `GPU_PREFERENCE_MODE` | `auto`: only on PCs with two GPUs | `keep` | Installed games set to the high-performance GPU in Windows graphics settings |
 | `NVIDIA_MODE` | `fix` | `keep` | NVIDIA global settings that cost FPS or cause stutter, set back to NVIDIA's defaults |
-| `AMD_MODE` | `fix` | `keep` | AMD shader cache set back to its default when it was turned off |
+| `AMD_MODE` | `fix` | `keep` | AMD shader cache back on when it was off; Radeon Chill off |
 | `SHADER_CACHE_MODE` | `protect` | `keep` | The DirectX shader cache kept out of Windows' automatic disk cleanup |
-| `CPU_MITIGATIONS_MODE` | `keep` | `off` | Spectre v2 and Meltdown mitigations |
-| `DEFENDER_EXCLUSIONS_MODE` | `keep` | `add` | Defender exclusions for game libraries and shader caches |
-| `STORE_APPS_BACKGROUND_MODE` | `keep` | `off` | Microsoft Store apps running in the background |
-| `HYPERVISOR_MODE` | `keep` | `off` | Whether the hypervisor loads at boot |
+| `CPU_MITIGATIONS_MODE` | `off` | `keep` | Spectre v2 and Meltdown mitigations |
+| `DEFENDER_EXCLUSIONS_MODE` | `add` | `keep` | Defender exclusions for game libraries and shader caches |
+| `STORE_APPS_BACKGROUND_MODE` | `off` | `keep` | Microsoft Store apps running in the background |
+| `HYPERVISOR_MODE` | `off` | `keep` | Whether the hypervisor loads at boot |
 
-The last four are off by default because they cost security or break something.
-Turn them on if you accept that cost.
+The last four gain FPS at a cost in security or features, listed under
+[Applied with a cost](#applied-with-a-cost). Set one to `keep` if you need what it
+turns off, such as WSL2 or Docker.
 
 ## What it changes
 
@@ -74,21 +82,24 @@ Turn them on if you accept that cost.
 | 5 | **Variable refresh rate for games without their own support on** | Since the Windows 10 May 2019 Update, Windows can give full-screen DX11 games that don't support VRR natively G-SYNC or FreeSync. Without VRR, a frame rate below the refresh rate is shown with judder or tearing. | Has an effect only with a VRR monitor, G-SYNC or FreeSync turned on in the driver, and a WDDM 2.6 or newer driver. Other entries in the same setting are kept. |
 | 6 | **Auto HDR off** | Auto HDR tone-maps every frame of SDR games while HDR is on, costing about 2–3% (3–6 FPS on an RTX 4070). | Windows 11. It only ever ran with HDR on; the other Auto HDR flags are kept. |
 | 7 | **Each monitor at its highest refresh rate** | Windows doesn't always pick a monitor's highest refresh rate, and driver reinstalls can drop it back to 60 Hz. At 60 Hz, V-Sync or a refresh-tied cap holds games at 60 FPS, and every frame reaches the screen later. | Monitors whose current resolution and colour depth offer a higher rate. The driver tests the mode first, then you confirm it within 15 seconds; without an answer it switches back. Interlaced modes are never used. |
-| 8 | **Installed games on the high-performance GPU** | On a PC with two GPUs, a game the driver doesn't recognise can start on the integrated GPU at a fraction of the frame rate; Minecraft: Java Edition is the classic case. The per-program choice in Windows graphics settings takes precedence over the NVIDIA and AMD ones. | PCs where Windows ranks a different GPU for power saving than for high performance: laptops with two GPUs, and desktops with the processor's graphics enabled. Games are found through Steam (every library), Epic, GOG, Ubisoft, the installed-program records of EA, Battle.net, Riot, Rockstar and other publishers, Minecraft's Java runtime, and Windows' own list of recognised games. Installers, crash reporters, anti-cheat services, launchers and updaters are left out. A program someone set to power saving is kept and reported. Other entries of each program's setting are kept. |
-| 9 | **NVIDIA settings that cost FPS or cause stutter, back to NVIDIA's defaults**: shader cache turned off; shader cache size below the driver default; threaded optimization forced off; preferred graphics processor set to integrated | With the shader cache off, games compile their shaders again at every start and stutter while they do. With a cache smaller than the default, the driver throws compiled shaders away and games compile them again mid-game; NVIDIA says reducing it "may negatively impact performance". The default grew with the drivers: 4 GB up to R565, 8 GB in R570, 12 GB in R580, 16 GB from R590. Threaded optimization forced off makes CPU-bound OpenGL games (Minecraft: Java Edition, emulators) do all driver work on one thread. "Integrated graphics" as the preferred processor puts every game without its own NVIDIA profile on the integrated GPU. | NVIDIA graphics. Only the global profile, and only these settings; per-game profiles and everything else stay as they are. A larger or unlimited cache is kept. |
-| 10 | **AMD shader cache back on** | Same effect as on NVIDIA: with it off, games compile their shaders again at every start. It goes back to AMD optimized, the default. | AMD graphics, only when the cache is set to Off. The value keeps the type the driver stored it in. |
+| 8 | **Installed games on the high-performance GPU** | On a PC with two GPUs, a game the driver doesn't recognise can start on the integrated GPU at a fraction of the frame rate; Minecraft: Java Edition is the classic case. The per-program choice in Windows graphics settings takes precedence over the NVIDIA and AMD ones. | PCs where Windows ranks a different GPU for power saving than for high performance: laptops with two GPUs, and desktops with the processor's graphics enabled. Games are found through Steam (every library), Epic, GOG, Ubisoft, the installed-program records of EA, Battle.net, Riot, Rockstar and other publishers, Minecraft's Java runtime, and Windows' own list of recognised games. Installers, crash reporters, anti-cheat services, launchers, updaters, browsers and chat apps are left out. Games set to power saving or "Let Windows decide" are switched too and listed. Other entries of each program's setting are kept. |
+| 9 | **NVIDIA settings that cost FPS or cause stutter, back to NVIDIA's defaults**: shader cache turned off; shader cache size below the driver default; threaded optimization forced off; preferred graphics processor set to integrated; a Max Frame Rate for all games well below the refresh rate | With the shader cache off, games compile their shaders again at every start and stutter while they do. With a cache smaller than the default, the driver throws compiled shaders away and games compile them again mid-game; NVIDIA says reducing it "may negatively impact performance". The default grew with the drivers: 4 GB up to R565, 8 GB in R570, 12 GB in R580, 16 GB from R590. Threaded optimization forced off makes CPU-bound OpenGL games (Minecraft: Java Edition, emulators) do all driver work on one thread. "Integrated graphics" as the preferred processor puts every game without its own NVIDIA profile on the integrated GPU. A global frame cap below 90% of the refresh rate holds every game back. | NVIDIA graphics. Only the global profile, and only these settings; per-game profiles and everything else stay as they are. A larger or unlimited cache is kept, and so is a cap just below the refresh rate, the usual G-SYNC setting. |
+| 10 | **AMD shader cache back on, Radeon Chill off** | Same effect as on NVIDIA: with the cache off, games compile their shaders again at every start; it goes back to AMD optimized, the default. Radeon Chill for all games lowers the frame rate whenever little moves on screen. | AMD graphics, only when the cache is Off or Chill is on. The values keep the type the driver stored them in. |
 | 11 | **DirectX shader cache kept out of automatic disk cleanup** | Microsoft's shader cache specification says the cache can be cleared by disk cleanup. Windows' automatic cleanup runs when a drive gets low on space, and games then compile their shaders again, with stutter. | Sets the cleanup handler's `Autorun` value to 0 in the 64-bit and 32-bit registry views. Disk Cleanup can still clear the cache by hand. NVIDIA's and AMD's own caches aren't part of Windows' cleanup. |
 | 12 | **Fault Tolerant Heap off, and its program list cleared** | After repeated crashes, Windows silently moves a program onto the fault-tolerant heap, which is much slower. The script prints how many programs were on it. | Always. |
 | 13 | **Memory manager**: page combining off, and the pagefile restored if it was disabled | Page combining periodically scans RAM and can hold a core at 100% for seconds. A disabled pagefile, left over from old tweak guides, makes games crash or stutter when the commit limit runs out. | Page combining at 16 GB or more. A custom pagefile is kept. |
 | 14 | **Forced HPET removed** (`bcdedit useplatformclock`) | Forced HPET makes every timer query far slower, which costs FPS and causes stutter. | Only if an old tweak set it. |
-| 15 | **Power throttling off** | On hybrid CPUs, Windows moves "background" processes to E-cores at reduced clocks. That catches game helper processes, shader compilers and games on a second monitor. This is a scheduler setting, not a power plan. | Desktops with hybrid CPUs: Intel 12th–14th gen, Core Ultra, Core 3/5/7, Ryzen AI 5/7/9. Laptops keep it for battery life unless you set `POWERTHROTTLING_MODE=off`. |
+| 15 | **Power throttling off** | Windows runs processes it considers background work at reduced clocks, and on hybrid CPUs moves them to E-cores. That catches game helper processes, shader compilers and games on a second monitor. This is a scheduler setting, not a power plan. | All PCs. It matters most on hybrid CPUs: Intel 12th–14th gen, Core Ultra, Core 3/5/7, Ryzen AI 5/7/9. On laptops it costs some battery life. |
 | 16 | **AMD 3D V-Cache Performance Optimizer checked** | Dual-CCD X3D chips need this service, Game Mode and Xbox Game Bar, or games spread across both CCDs and stutter. | Ryzen X3D CPUs. The service is re-enabled if something disabled it, and you get a warning if it or Game Bar is missing. |
 | 17 | **Widgets and Edge background running off** | Widgets keeps a 50–150 MB web view loaded and refreshing. Edge's startup boost and background mode keep browser processes running after you close it. This matters most on 8–16 GB systems. | Windows 11 Widgets, or Windows 10 News and Interests. The Edge part only runs if Edge is installed. |
 | 18 | **Windows telemetry background activity off**: Compatibility Appraiser, CEIP, Device Census, Feedback, SQM and error-report upload tasks; the inventory collector, application telemetry, CEIP and activity history; the DiagTrack service and its trace session; diagnostic data at the lowest level your edition allows | The appraiser (`CompatTelRunner.exe`) can hold CPU and disk at 100% for up to 20 minutes, and the other tasks add smaller bursts. This doesn't raise average FPS; it removes background bursts that show up in the 0.1% lows. | Only tasks that exist on your build. DiagTrack is kept when Xbox Gaming Services is installed, because Xbox achievements in PC games are reported through it. |
 | 19 | **Vendor telemetry off** | Intel's System Usage Report service is documented to hold a full CPU core at times. NVIDIA's crash and telemetry reporter, AMD's User Experience Program and Office's telemetry agent run on schedules. The drivers don't need any of them. | Only the ones installed. NVIDIA's profile updater and driver tasks are left alone. |
 | 20 | **SSD TRIM checked** | With TRIM off, SSD writes slow down over time, and asset streaming and shader-cache writes stutter. | Re-enabled only if something turned it off. |
 
-### Optional (off by default)
+### Applied with a cost
+
+These are on by default because they gain FPS. Set the option to `keep` if the cost
+matters to you.
 
 | Step | Change | Gain | Cost |
 |---|---|---|---|
@@ -97,8 +108,8 @@ Turn them on if you accept that cost.
 | 22 | **Defender exclusions for games** (`DEFENDER_EXCLUSIONS_MODE=add`) | Faster loads and less asset-streaming and shader-compilation stutter. It excludes launcher libraries (Steam, including extra libraries; Epic; EA; Xbox; Ubisoft; GOG; Riot) and GPU shader caches. | Malware placed in those folders is not scanned in real time. Skipped when another antivirus is active. |
 | 23 | **Hypervisor off** (`HYPERVISOR_MODE=off`) | About 1% in CPU-bound games when Hyper-V or Virtual Machine Platform is installed. | WSL2, Hyper-V, Windows Sandbox and Docker stop working. Refused when an anti-cheat needs VBS. |
 
-Without its option, step 23 only reports whether Hyper-V or Virtual Machine Platform
-is keeping the hypervisor loaded.
+With `HYPERVISOR_MODE=keep`, step 23 only reports whether Hyper-V or Virtual Machine
+Platform is keeping the hypervisor loaded.
 
 ### What it lists for you to fix (step 24)
 
@@ -107,12 +118,12 @@ each one and lists the problems it finds, biggest gain first.
 
 | Problem | How it is found | What it costs |
 |---|---|---|
-| Monitor plugged into the motherboard | A desktop monitor driven by the GPU Windows ranks for power saving | Every frame is copied from the graphics card to the processor's graphics first |
+| Main monitor plugged into the motherboard | A desktop's main monitor driven by the GPU Windows ranks for power saving | Every frame is copied from the graphics card to the processor's graphics first. A second screen there is only noted |
 | Laptop on battery | Battery discharging | Laptops cut CPU and GPU power; NVIDIA Battery Boost caps games at 30 FPS |
 | XMP or EXPO off | Memory running below the speed in its part number | 17–20% average FPS and about 30% of the 1% lows in Hardware Unboxed's test |
 | One memory channel | One stick, or all sticks in the same channel | About 12% average FPS and 16% of the 1% lows in Hardware Unboxed's test; under 3% on X3D CPUs |
-| Monitor connection limits the refresh rate | The monitor's EDID reports 100 Hz or more, but the connection offers 75 Hz or less at the current resolution | Games held at 60 FPS with V-Sync. Often an HDMI 1.4 port, an old cable or an adapter |
-| A frame rate cap in the driver | NVIDIA's global Max Frame Rate well below the refresh rate, or Radeon Chill on for all games | Every game capped, or slowed whenever little moves |
+| Monitor connection limits the refresh rate | The monitor's EDID allows 100 Hz or more at the current resolution (its maximum rate, limited by its maximum pixel clock), but the connection offers 75 Hz or less | Games held at 60 FPS with V-Sync. Often an HDMI 1.4 port, an old cable or an adapter |
+| A frame rate cap in the driver | NVIDIA's global Max Frame Rate well below the refresh rate, or Radeon Chill on for all games, when steps 9 or 10 could not remove it | Every game capped, or slowed whenever little moves |
 | Less than 16 GB of memory | Installed memory | Current games page to disk, which shows up as stutter |
 | Graphics card on fewer PCIe lanes | `nvidia-smi` link width below the card's maximum, or x4 on a desktop | Lower FPS, most of all on cards with 8 GB or less when video memory runs full |
 | Games on a hard drive | Steam and Epic library drives | Hitches while textures and levels stream in |
@@ -123,7 +134,7 @@ each one and lists the problems it finds, biggest gain first.
 | HWiNFO and RGB software together | Running processes | Both poll the motherboard's SMBus; the collisions cause periodic stutter |
 | Graphics driver older than a year | Driver date | New games get their performance fixes in newer drivers |
 | Intel 13th/14th gen microcode before 0x12B | CPU microcode revision | Not FPS: the crashes and CPU degradation Intel fixed |
-| Resizable BAR off (NVIDIA) | `nvidia-smi` BAR1 size | 2–4% in the games NVIDIA enables it for. For AMD (7–16% at 1080p) and Intel Arc (about 25%) it shows where to check |
+| Resizable BAR off (NVIDIA) | `nvidia-smi` BAR1 size, on RTX 30 and newer desktop cards | 2–4% in the games NVIDIA enables it for. If Windows boots in legacy BIOS mode, it says to convert the disk with MBR2GPT first, because Windows won't start with CSM off. For AMD (7–16% at 1080p) and Intel Arc (about 25%) it shows where to check |
 
 It also notes software known to cost FPS while you play: the NVIDIA overlay's Game
 Filters, clip recorders such as Medal and Overwolf, and short polling periods in MSI
@@ -193,6 +204,12 @@ screenshot options are on, and it has no supported registry or policy setting. P
 - The Widgets board disappears, and Edge opens slightly slower from cold.
 - Edge and Settings may show "managed by your organization". This happens because the
   changes are made through policy settings.
+- Spectre v2 and Meltdown mitigations are off: any program that runs on the PC,
+  including web pages, could use those attacks to read memory it shouldn't. Game
+  libraries and shader caches are not scanned in real time by Defender.
+- WSL2, Hyper-V, Windows Sandbox and Docker don't work while the hypervisor is off.
+  Store apps such as WhatsApp or Phone Link don't notify you while closed.
+- Power throttling off costs laptops some battery life.
 - A higher refresh rate draws a little more power, more so on laptops on battery; with
   several monitors, some graphics cards then keep their memory clock up at idle.
 - Settings > System > Display > Graphics lists every game GameTune set to the
