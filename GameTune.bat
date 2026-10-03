@@ -29,8 +29,10 @@ rem  DIAGTRACK_MODE        auto, disable or keep
 rem      The Connected User Experiences and Telemetry service. auto turns it
 rem      off unless Xbox Gaming Services is installed, because Xbox
 rem      achievements in PC games are reported through it.
-rem  HAGS_MODE             on or keep
-rem      Hardware-accelerated GPU scheduling.
+rem  HAGS_MODE             on, off or keep
+rem      Hardware-accelerated GPU scheduling. Its effect is within a few
+rem      percent either way and differs per game, so if your 1 percent lows
+rem      got worse, test once with off. DLSS frame generation needs it on.
 rem  AUTOHDR_MODE          off or keep
 rem      Auto HDR costs 2 to 3 percent of GPU time while it is active.
 rem  POWERTHROTTLING_MODE  auto, off or keep
@@ -251,7 +253,8 @@ echo  Planned changes
 if defined DO_VBS echo   - VBS and Memory Integrity: off
 if not defined DO_VBS echo   - VBS and Memory Integrity: unchanged, %VBS_WHY%
 echo   - Game Mode: on.  Game Bar background recording: off
-if /i not "%HAGS_MODE%"=="keep" echo   - Hardware-accelerated GPU scheduling: on
+if /i "%HAGS_MODE%"=="on" echo   - Hardware-accelerated GPU scheduling: on
+if /i "%HAGS_MODE%"=="off" echo   - Hardware-accelerated GPU scheduling: off, for an A/B test
 if %GT_BUILD% GEQ 22621 echo   - Optimizations for windowed games: on
 if /i not "%AUTOHDR_MODE%"=="keep" if %GT_BUILD% GEQ 22000 echo   - Auto HDR: off
 echo   - Fault Tolerant Heap: off, per-game list cleared
@@ -397,11 +400,20 @@ call :hdr "Hardware-accelerated GPU scheduling"
 if /i "%HAGS_MODE%"=="keep" echo   [SKIP] HAGS_MODE is set to keep.& exit /b 0
 set "GDK=HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
 call :getdw "%GDK%" HwSchMode V1
+if /i "%HAGS_MODE%"=="off" goto :hags_off
+if /i not "%HAGS_MODE%"=="on" echo   [SKIP] HAGS_MODE must be on, off or keep.& exit /b 0
 if "%V1%"=="2" echo   [ OK ] Already on.& exit /b 0
 reg add "%GDK%" /v HwSchMode /t REG_DWORD /d 2 /f >nul 2>&1
 if not "%errorlevel%"=="0" echo   [FAIL] Could not write HwSchMode.& exit /b 0
 if "%V1%"=="1" (echo   [ OK ] Was off - turned on.) else (echo   [ OK ] Turned on.)
 echo          Unsupported GPUs and drivers simply keep the old scheduler.
+exit /b 0
+
+:hags_off
+if "%V1%"=="1" echo   [ OK ] Already off.& exit /b 0
+reg add "%GDK%" /v HwSchMode /t REG_DWORD /d 1 /f >nul 2>&1
+if not "%errorlevel%"=="0" echo   [FAIL] Could not write HwSchMode.& exit /b 0
+echo   [ OK ] Turned off. DLSS frame generation needs it on, and FSR 3 frame generation paces worse without it.
 exit /b 0
 
 

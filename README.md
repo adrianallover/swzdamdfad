@@ -11,9 +11,20 @@ reasons are [listed below](#deliberately-not-included).
 The script writes no logs, exports, backups or restore points. It does not touch
 network settings, power plans or `powercfg`, temp files, or disk cleanup.
 
-For ping, jitter, lag spikes and packet loss, use the companion script
-[`NetTune.bat`](NetTune.md). It changes only network settings, so the two don't
-overlap.
+Two companion scripts cover the rest:
+
+- [`FrameCheck.bat`](FrameCheck.md) changes nothing. It finds what still costs FPS or
+  causes dips on your PC:
+  - hardware and setup problems no script can fix, such as memory in one channel,
+    XMP or EXPO off, a monitor plugged into the motherboard or set to 60 Hz, games on
+    a hard drive, or a graphics card on a narrow PCIe link;
+  - while you play, what happens at the moments frames drop.
+- [`NetTune.bat`](NetTune.md) handles ping, jitter, lag spikes and packet loss. It
+  measures where loss and bufferbloat come from and changes only network settings, so
+  it doesn't overlap with GameTune.
+
+If your FPS or lows are worse than you expect, run FrameCheck first: its findings
+usually matter more than any Windows setting.
 
 ## Usage
 
@@ -32,7 +43,7 @@ Edit the values at the top of the script to change what it does.
 |---|---|---|---|
 | `VBS_MODE` | `auto`: off unless FACEIT or Riot Vanguard is installed | `disable`, `keep` | VBS and Memory Integrity |
 | `DIAGTRACK_MODE` | `auto`: off unless Xbox Gaming Services is installed | `disable`, `keep` | The DiagTrack telemetry service |
-| `HAGS_MODE` | `on` | `keep` | Hardware-accelerated GPU scheduling |
+| `HAGS_MODE` | `on` | `off`, `keep` | Hardware-accelerated GPU scheduling. Its effect is a few percent either way and differs per game: if your 1% lows got worse, test once with `off` |
 | `AUTOHDR_MODE` | `off` | `keep` | Auto HDR |
 | `POWERTHROTTLING_MODE` | `auto`: off on desktops with hybrid CPUs | `off`, `keep` | Power throttling of background processes |
 | `CPU_MITIGATIONS_MODE` | `keep` | `off` | Spectre v2 and Meltdown mitigations |
@@ -51,7 +62,7 @@ Turn them on if you accept that cost.
 |---|---|---|---|
 | 1 | **VBS and Memory Integrity (HVCI) off**, plus Credential Guard and any Group Policy values that would keep VBS on | Memory Integrity costs about 5% average FPS in Tom's Hardware's tests, and more in the 1% lows of CPU-bound games. Microsoft's own gaming guidance lists turning it off. | Skipped when FACEIT or Riot Vanguard is installed. The explicit "off" value also opts the PC out of the automatic Memory Integrity enablement that starts with the October 13, 2026 Windows update. |
 | 2 | **Game Mode on, Game Bar background recording off** | Game Mode measurably improves 1% lows when apps run in the background. Dual-CCD Ryzen X3D chips need it to park the non-V-Cache CCD. Background recording encodes video the whole time you play. | Always. Applied to the signed-in user, even when elevated with another admin account. |
-| 3 | **Hardware-accelerated GPU scheduling on** | 2025 testing measured about +1.6% in 1% lows; DLSS and FSR frame generation need it. | Windows ignores the setting when the GPU or driver cannot do it. |
+| 3 | **Hardware-accelerated GPU scheduling on** | Effects are small and go both ways. One 2025 overview found about +1.6% in 1% lows, while PC Games Hardware found stutter in Red Dead Redemption 2 on Vulkan. DLSS frame generation needs it, and FSR 3 frame generation paces better with it. If your lows got worse, test with `HAGS_MODE=off`. | Windows ignores the setting when the GPU or driver cannot do it. |
 | 4 | **Optimizations for windowed games on** | Moves DX10/DX11 games that run windowed or borderless from the old "blt" presentation model to the flip model, lowering latency and enabling independent flip and VRR. It is off by default. | Windows 11 22H2 and newer. Other entries in the same setting are kept. |
 | 5 | **Auto HDR off** | Auto HDR tone-maps every frame of SDR games while HDR is on, costing about 2–3% (3–6 FPS on an RTX 4070). | Windows 11. It only ever ran with HDR on; the other Auto HDR flags are kept. |
 | 6 | **Fault Tolerant Heap off, and its program list cleared** | After repeated crashes, Windows silently moves a program onto the fault-tolerant heap, which is much slower. The script prints how many programs were on it. | Always. |
@@ -216,7 +227,9 @@ set to `0` are listed in its output.
 - Game Mode: [MakeUseOf month-long test](https://www.makeuseof.com/i-tested-windows-game-mode-for-month-what-benchmarks-actually-showed/);
   X3D parking: [Phoronix](https://www.phoronix.com/review/amd-3d-vcache-optimizer-9950x3d),
   [Guru3D](https://forums.guru3d.com/threads/9950x3d-and-game-bar-requiements.456043/).
-- HAGS: [2026 overview of 2025 test data](https://www.techbusinessnews.com.au/hardware-accelerated-gpu-scheduling-the-2025-2026-truth-nobodys-telling-you/),
+- HAGS: [PC Games Hardware benchmark](https://www.pcgameshardware.de/Windows-Software-277633/Specials/HAGS-Benchmark-Test-1352947/),
+  [Gamers Nexus](https://gamersnexus.net/guides/3599-windows-10-hardware-accelerated-gpu-scheduling-benchmarks),
+  [2026 overview of 2025 test data](https://www.techbusinessnews.com.au/hardware-accelerated-gpu-scheduling-the-2025-2026-truth-nobodys-telling-you/),
   [digitnaut](https://www.digitnaut.com/2026/05/hardware-accelerated-gpu-scheduling-on-or-off.html).
 - Windowed-game optimizations: [DirectX developer blog](https://devblogs.microsoft.com/directx/updates-in-graphics-and-gaming/),
   [BleepingComputer](https://www.bleepingcomputer.com/news/microsoft/windows-11-gaming-gets-significant-latency-and-hdr-improvements/).

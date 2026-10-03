@@ -14,7 +14,9 @@ reasons are [listed below](#deliberately-not-included).
 
 The script writes no logs, exports, backups or restore points. It never flushes or
 deletes DNS, ARP or any other network data, does no Winsock or IP reset, and does not
-touch power plans, `powercfg`, temp files or disk cleanup.
+touch power plans, `powercfg`, temp files or disk cleanup. (The two tests compile a
+small C# helper when they start; Windows' compiler creates and removes its own
+temporary files for that.)
 
 It doesn't overlap with [`GameTune.bat`](README.md), which leaves network settings
 alone, so you can run both.
@@ -30,8 +32,19 @@ send them first.
 
 Lag spikes that appear when someone on your network downloads or uploads are
 bufferbloat in the router or modem. Only Smart Queue Management (SQM) in the router
-fixes that; [see below](#bufferbloat-the-fix-is-in-the-router). The test at the end of
-the script tells you where your loss and jitter come from.
+fixes that for every device; [see below](#bufferbloat-the-fix-is-in-the-router).
+NetTune measures it for you and can keep this PC's own uploads out of the modem's
+queue.
+
+The two tests at the end show where your problems come from:
+
+- The **path test** pings every router between your PC and the internet at the same
+  time and shows where packet loss starts: the Wi-Fi or cable to your router, the
+  line to your ISP, or deeper in the ISP's network.
+- The **bufferbloat test** downloads and then uploads at full speed while it pings
+  your router, your ISP's first router and an internet server. It reports how much
+  latency the load adds, which device the delay builds up in, your line's speeds,
+  and the SQM rates to start from.
 
 ## Usage
 
@@ -39,11 +52,19 @@ the script tells you where your loss and jitter come from.
 2. Check the detected connection and the list of planned changes, then press **Y**.
    Don't run it in the middle of a match: changed adapters restart, so the
    connection drops for a few seconds.
-3. Restart Windows. The socket buffer, the packet marking and the download caps only
-   take full effect after a reboot.
+3. If the bufferbloat test finds that uploads delay your pings, NetTune offers to
+   limit this PC's uploads ([step 11](#11-upload-limit-for-this-pc)). Press **Y** or
+   **N**.
+4. Restart Windows. The socket buffer, the packet marking, the download caps and the
+   upload limit only take full effect after a reboot.
 
 Re-run it after a network driver update, since driver installs reset adapter
 settings, and after a Windows feature update.
+
+To test without changing anything, run `NetTune.bat test` from a command prompt. It
+runs only the path test and the bufferbloat test, needs no administrator rights, and
+is the quick way to check a router setting, a different cable, or the evening against
+the morning.
 
 ## Options
 
@@ -60,7 +81,12 @@ Edit the values at the top of the script to change what it does.
 | `DO_BACKGROUND_PERCENT` | `20` | `1` to `90`, `keep` | Cap for background Windows Update and Store downloads (step 6) |
 | `ONEDRIVE_MODE` | `on` | `keep` | OneDrive uploads only with spare bandwidth (step 7) |
 | `SOCKET_BUFFER_MODE` | `on` | `keep` | Larger Winsock default receive buffer (step 3) |
-| `DIAG_MODE` | `on` | `off` | The latency, jitter and packet-loss test (step 9) |
+| `DIAG_MODE` | `on` | `off` | The path test (step 9) |
+| `DIAG_TARGETS` | `1.1.1.1;8.8.8.8` | IP addresses or names, separated by `;` | Servers the path test pings; the route to the first is traced. Put your game server's IP first to test the route to it |
+| `DIAG_SECONDS` | `40` | `10` to `600` | Length of the path test. Longer catches rare loss more reliably |
+| `LOADTEST_MODE` | `on` | `off` | The bufferbloat test (step 10). It is skipped on metered connections |
+| `UPLOAD_LIMIT_MODE` | `ask` | `auto`, `off`, `keep`, or a number of Mbps | The upload limit for this PC (step 11): `ask` offers it when uploads add 30 ms or more, `auto` sets it then without asking, `off` removes it, a number sets that limit |
+| `UPLOAD_LIMIT_PERCENT` | `85` | `50` to `95` | The limit as a share of the upload speed the test measured |
 
 To mark a game that isn't on the list, add its executable name to `QOS_UDP_APPS`.
 Task Manager's **Details** tab shows the name while the game runs. Re-running the
@@ -188,20 +214,124 @@ removed; you get a warning or a note:
 - third-party filter drivers on your internet adapter;
 - an MTU below 1400 bytes.
 
-### 9. Latency, jitter and packet loss
+### 9. Path test: packet loss and latency at every hop
 
-The script sends 50 pings each to your router, Cloudflare (1.1.1.1) and Google
-(8.8.8.8), and reports loss, average, jitter and the worst ping for each. It then
-tells you where the problem is:
+NetTune traces the route to the first address in `DIAG_TARGETS` (1.1.1.1 by
+default), then pings every router on it and the test servers at the same time for
+`DIAG_SECONDS`. Your router and the test servers are pinged 5 times a second; the
+routers in between twice a second, because they limit how often they answer. The
+table shows loss, average, 95th-percentile and worst latency for each hop:
 
-- **Loss or jitter already at the router**: Wi-Fi signal or interference, the cable,
-  or the router itself.
-- **Clean to the router, loss beyond it**: the modem, the ISP line or its routing.
-- **Jitter beyond the router**: congestion. If it rises while something downloads,
-  that's bufferbloat.
+```
+  Hop  Address              Loss     Avg     95%   Worst  (ms)
+    1  192.168.0.1         0.0%     0.7       1       1   your router
+    2  96.120.10.1         4.1%     9.5      11      14   your ISP
+    3  (no answer)
+    4  68.86.1.1          30.0%    11.4      13      15
+    5  68.86.2.2           4.0%    12.6      14      19
+    6  1.1.1.1             4.0%    13.5      15      22   test server
+```
 
-If Windows Update is downloading during the test, the script tells you, because that
-raises the numbers.
+How to read it, and what NetTune concludes for you:
+
+- **Loss that starts at one hop and continues to the end is real.** It started on
+  the link just before that hop.
+- **Loss at a single hop in the middle is not.** Routers answer pings last, after
+  forwarding traffic, so hop 4 above loses pings while the hops after it don't.
+- **Hop 1 is your router.** Loss starting there is the Wi-Fi radio link, the cable,
+  or the router.
+- **The first public address is your ISP.** Loss starting between your router and
+  that hop is the modem or fibre box, the line, or the ISP's first equipment. See
+  [Packet loss](#packet-loss-finding-where-it-starts).
+- **Loss starting deeper in** is inside the ISP's network or beyond it. Loss only in
+  the evening is congestion.
+- **Lag spikes to your router** (worst above 30 ms where 1 to 3 ms is normal) are
+  Wi-Fi scans, power saving or interference on Wi-Fi.
+
+On some networks a test server doesn't answer pings at all; NetTune then says so
+instead of guessing. If Windows Update is downloading during the test, it tells you,
+because that raises the numbers. When Windows PowerShell can't compile the test code
+(for example under a strict application-control policy), NetTune falls back to 50
+plain pings each to your router and two servers.
+
+### 10. Bufferbloat test: latency at full download and upload speed
+
+For about 35 seconds NetTune measures latency:
+
+- idle;
+- while it downloads from Cloudflare's speed-test servers on 6 connections at once;
+- while it uploads to them on 4 connections.
+
+It pings your router, your ISP's first router and 1.1.1.1 five times a second
+throughout, and reads the adapter's byte counters to measure the speed.
+
+```
+                    Router       ISP  Internet        Speed
+  Idle                1 ms      8 ms      9 ms
+  Downloading        +0 ms    +40 ms    +42 ms     400 Mbps
+  Uploading          +0 ms   +300 ms   +304 ms    20.0 Mbps
+```
+
+The `+` figures are the median latency added under load. The grades are Waveform's:
+
+| Grade | Added latency |
+|---|---|
+| A+ | under 5 ms |
+| A | 5 to 30 ms |
+| B | 30 to 60 ms |
+| C | 60 to 200 ms |
+| D | 200 to 400 ms |
+| F | over 400 ms |
+
+Where the delay starts tells you which device queues:
+
+- **Delay already at your router.** On Wi-Fi that is the radio link queueing;
+  Ethernet removes it. On Ethernet, it means the router itself can't keep up.
+- **Delay starting at your ISP's router.** The modem or the ISP's equipment is
+  queueing: classic bufferbloat. NetTune prints the SQM rates to start from: 85% of
+  the measured download and 90% of the measured upload. Download needs more headroom,
+  because the router can only slow remote senders down indirectly.
+
+It also reports packet loss under load, and any packets the network adapter itself
+dropped or rejected during the test.
+
+The test moves as much data as a speed test: up to about 2.5 GB of download on a
+multi-gigabit line, much less on slower ones. It is skipped on connections that
+Windows treats as metered, and it can't run while the line is busy. Cloudflare limits
+how fast scripts may request data. NetTune therefore uses a few large requests (100 MB
+down, 32 MB up), moves to smaller ones if a size is refused, and tells you when the
+server slowed it down. On a multi-gigabit line that can make the measured speed lower
+than your line's.
+
+### 11. Upload limit for this PC
+
+When uploading adds 30 ms or more, NetTune shows the delay and the measured upload
+speed and offers a limit at 85% of that speed (`UPLOAD_LIMIT_PERCENT`). The limit is
+a Windows QoS throttle on all outgoing traffic of this PC, with two exceptions:
+
+- the games in `QOS_UDP_APPS` and `QOS_ALL_APPS`, because a policy that names a
+  program takes precedence over one that doesn't;
+- your home network (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, link-local and the
+  IPv6 private ranges), so copies to a NAS or another PC stay at full speed.
+
+Microsoft documents that a throttle limits the aggregate traffic matching its policy,
+and that only one policy applies to each connection. Big uploads then queue inside
+this PC, where game packets skip the queue, and never fill the modem's buffer. NetTune
+checks the limit right away with a short upload. If Windows hasn't applied it yet, it
+says so: the limit then applies after the restart, and `NetTune.bat test` confirms it.
+
+What the limit can't do:
+
+- It covers only this PC. Another device that uploads, such as a phone backing up
+  photos or a camera streaming to the cloud, still fills the modem's queue. SQM in
+  the router covers every device.
+- It can't limit downloads: Windows has no inbound throttle. Download bufferbloat
+  needs SQM in the router; meanwhile, cap the launchers (Steam: **Settings >
+  Downloads > Limit bandwidth**) and Windows Update (step 6).
+- Games not in the two lists are throttled with everything else. Add your game to
+  `QOS_UDP_APPS`.
+
+`UPLOAD_LIMIT_MODE=off` removes the limit; a number sets a limit in Mbps directly.
 
 ### What it detects first
 
@@ -220,19 +350,131 @@ raises the numbers.
 
 ## Bufferbloat: the fix is in the router
 
-When the line is full, the modem or router queues packets, and a badly sized queue
-adds 100 ms or more to every game packet. That's the lag spike you get when someone
-starts a download or a video call. A PC can't remove that queue. Steps 5 to 7 stop
-your own PC from filling it, and step 5 lets DSCP-aware routers send game packets
-first.
+When the line is full, the modem or router queues packets. A badly sized queue adds
+100 ms or more to every game packet: the lag spike you get when someone starts a
+download, a video call or a photo backup. Your numbers from the bufferbloat test (or
+[Waveform's test](https://www.waveform.com/tools/bufferbloat)) show how much.
 
-1. Test at [waveform.com/tools/bufferbloat](https://www.waveform.com/tools/bufferbloat).
-   The grade is how much latency rises under load: A+ up to 5 ms, A up to 30 ms,
-   B up to 60 ms, C up to 200 ms, D up to 400 ms, F above that.
-2. Below A, turn on SQM (Smart Queue Management) in the router, using CAKE or
-   fq_codel. Set its speeds to about 90–95% of your measured download and upload, then
-   test again. OpenWrt has it as the SQM package; many other routers offer it under
-   QoS.
+A PC can't remove that queue. Steps 5 to 7 and the upload limit keep this PC from
+filling it, and step 5 lets DSCP-aware routers send game packets first. The real fix
+is Smart Queue Management (SQM) in the router, with CAKE or fq_codel:
+
+- Every flow gets its own short queue, served in turn, so a game packet never waits
+  behind a download.
+- A flow whose packets keep waiting longer than about 5 ms gets a drop or an ECN
+  mark, which tells the sender to slow down.
+
+Priority-only "QoS" can't do this, because it never tells big senders to slow down.
+
+### Setting it up
+
+1. **Make the router the bottleneck.** SQM only controls a queue it owns, so its
+   rates go just below your line's. The bufferbloat test prints rates to start from:
+   85% of the measured download and 90% of the measured upload. Download needs more
+   headroom, because the router can only slow remote senders down indirectly.
+2. **Test again** with `NetTune.bat test`, or with Waveform's test.
+   - While a direction still adds more than 30 ms, lower its rate in 5% steps.
+   - Once both stay below 30 ms, you can raise them in small steps until latency
+     starts to rise, then step back.
+   - Cable lines often run faster for the first seconds of a transfer, so judge by
+     long tests. NetTune's phases leave out their first 2 seconds.
+3. **Set the link overhead** if the router asks. CAKE counts each packet's framing,
+   so it shapes correctly, especially for small game packets:
+
+   | Your line | CAKE keyword / overhead |
+   |---|---|
+   | Cable (DOCSIS) | `docsis` (overhead 18, mpu 64) |
+   | Fibre or anything handed over as Ethernet | `ethernet` (overhead 38, mpu 84); add 4 per VLAN tag (`ether-vlan`) and 8 for PPPoE |
+   | VDSL2 with PPPoE | `pppoe-ptm` (overhead 30, PTM) |
+   | VDSL2 without PPPoE | `bridged-ptm` (overhead 22, PTM) |
+   | ADSL | `atm` with the encapsulation's overhead, e.g. `pppoe-llcsnap` (40) or `pppoe-vcmux` (32) |
+   | Unknown | `conservative` (overhead 48, ATM) |
+
+   OpenWrt's SQM page calls this **Link Layer Adaptation**: choose "Ethernet with
+   overhead" and enter the number. For ADSL choose ATM.
+4. **Keep DSCP working.** With CAKE's `diffserv4` or `diffserv3`, packets marked
+   DSCP 46 (EF), as step 5 marks your games, go into the highest-priority "voice"
+   tin. In OpenWrt that is the `layer_cake.qos` script; `piece_of_cake.qos` has a
+   single tin and ignores the marks. Download marks usually can't be trusted, so
+   ignoring them on the download side, as OpenWrt does by default, is fine.
+
+### Where to find it
+
+| Router | Where | Notes |
+|---|---|---|
+| OpenWrt | **Network > SQM QoS** after installing `luci-app-sqm` (`opkg install`, or `apk add` on 25.12) | Interface: your WAN; rates in kbit/s; queue discipline `cake`. Turn off **Routing/NAT offloading** under **Network > Firewall**; it bypasses SQM |
+| GL.iNet (firmware 4.9 or newer) | **FLOW CONTROL > SQM** | Rates in Mbps, discipline `cake`. Optional Cake Autorate for lines whose speed varies. Turns off hardware acceleration; can't run alongside QoS |
+| Ubiquiti UniFi | **Smart Queues** in the WAN settings (**Settings > Internet > WAN**, under Advanced, in current releases) | fq_codel. Meant for lines under about 300 Mbps |
+| Ubiquiti EdgeRouter | **QoS > Smart Queue** | fq_codel. An ER-X manages about 150 Mbps |
+| ASUS, stock firmware | **Adaptive QoS > QoS** | Type **Adaptive QoS** or **Traditional QoS** with **Manual** bandwidth below your line's. **Bandwidth Limiter** only caps single devices and doesn't fix bufferbloat |
+| ASUS, Asuswrt-Merlin | **Adaptive QoS > QoS**, type **Cake** | With overhead presets. Disables hardware acceleration, so it tops out around 350 Mbps on most models. 3006.102.9 adds upload-only **HW AQM** at about 95% |
+| Netgear Nighthawk Pro Gaming (DumaOS) | **Anti-Bufferbloat** (DumaOS 3: **Congestion Control**) | Set it to **Always**, not Auto, so it doesn't depend on game detection |
+| eero | **eero Labs > Optimize for Conferencing and Gaming** | eero's name for SQM |
+| OPNsense | **Firewall > Shaper > Pipes**, scheduler **FQ_CoDel**, plus queues and rules | Follow the official "Fixing bufferbloat with FQ_Codel" how-to |
+| pfSense | **Firewall > Traffic Shaper > Limiters**, scheduler **FQ_CODEL**, plus a floating rule on WAN | Netgate's "Configuring CoDel Limiters for Bufferbloat" recipe |
+| MikroTik (RouterOS 7) | Queue type **cake** in a simple queue or queue tree | FastTrack bypasses simple queues: turn it off or attach the queue to the interface |
+| TP-Link Archer and Deco, Fritz!Box | Only device or app prioritisation | No real SQM: put an SQM router behind it (below) |
+
+A router can only shape as fast as its processor allows. Approximate CAKE ceilings:
+MT7621-class routers about 200 to 300 Mbps, UniFi gateways about 300 Mbps, ASUS
+with Merlin's Cake about 350 Mbps, a NanoPi R4S about 700 to 800 Mbps, a GL.iNet Flint 2
+(GL-MT6000) or an Intel N100 box with OpenWrt above 1 Gbps. Above that, use
+fq_codel with `simple.qos` instead of CAKE, or a faster router.
+
+### When the ISP's box has no SQM
+
+ISP all-in-one gateways usually have none. Cable gateways with DOCSIS 3.1, such as
+Xfinity's, use PIE queue management on the upload, which keeps upload bufferbloat to
+roughly 15 to 30 ms instead of hundreds. Older modems have no such management.
+
+1. Put an SQM-capable router behind the ISP's box and connect **every** device to the
+   new router. Anything left on the ISP box bypasses SQM.
+2. Turn off the ISP box's Wi-Fi.
+3. Put the box in bridge or modem mode, or use IP passthrough (AT&T calls it that),
+   so there are not two routers doing NAT. Without either, put your router's WAN
+   address in the box's DMZ.
+
+Until then, NetTune's upload limit keeps this PC's own uploads out of the modem's
+queue.
+
+On 5G, LTE and other lines whose speed changes from minute to minute, a fixed SQM
+rate is either too low or too high. `cake-autorate` on OpenWrt, or GL.iNet's Cake
+Autorate, adjusts the rate continuously.
+
+## Packet loss: finding where it starts
+
+Run the path test, wired if you can, so Wi-Fi is ruled out first. Then compare the
+loss columns of the bufferbloat test:
+
+- **Loss only under load** is a full queue overflowing. That is bufferbloat, and SQM
+  fixes it.
+- **Loss when the line is idle**, starting at your ISP's first hop, is a line fault.
+
+To check the line, look at your modem's status page:
+
+- **Cable modem** (usually http://192.168.100.1; Xfinity gateways at http://10.0.0.1).
+  Faults the ISP must fix (connectors, splitters, amplifiers, the cable itself):
+
+  | Value | Normal range | Fault |
+  |---|---|---|
+  | Downstream power | −15 to +15 dBmV | Outside the range |
+  | Downstream SNR or MER | 33 dB or more | Below 30 dB on 256-QAM channels |
+  | Upstream power | 35 to 51 dBmV (up to 54 with few channels) | Pinned near the top |
+  | Uncorrectable codewords | Steady | Climbing while you use the line: each one is lost data |
+  | Event log | No timeouts | Repeated T3 or T4 timeouts: upstream noise, and the modem resets |
+
+- **DSL**: an SNR margin that falls below its target, a CRC error count that keeps
+  rising, or frequent resyncs mean a line fault. Interleaving, which the ISP may turn
+  on, trades a few milliseconds of latency for fewer errors.
+
+What to show the ISP:
+
+- the path-test table, taken wired, at idle and at different times of day;
+- the modem's signal values and event log (cable), or the margin and error counts
+  (DSL).
+
+Loss that starts at their first hop and continues to the end is something their
+support can act on.
 
 ## Deliberately not included
 
@@ -257,7 +499,6 @@ Windows, obsolete, harmful, or excluded by design.
 | Disabling WLAN AutoConfig (`netsh wlan set autoconfig enabled=no`) | It stops all background scans, but Windows also stops reconnecting after any drop. That's not safe to leave on. |
 | Disabling Windows Update | A security risk. Step 6 caps its bandwidth instead. |
 | Wi-Fi Packet Coalescing off | It only affects broadcast and multicast packets while the PC idles, not game traffic. |
-| A built-in speed test under load | Public speed-test servers rate-limit scripted use. Waveform's test is the standard. |
 | Flushing DNS or ARP, Winsock or IP reset, deleting network data | Excluded by design, and no help for latency: they only clear caches or reset configuration. |
 | Wireless power-saving mode in the power plan | Excluded by design (no `powercfg`). Driver-level power saving is handled in step 1. |
 
@@ -279,6 +520,11 @@ Windows, obsolete, harmful, or excluded by design.
 - Wi-Fi is only used when Ethernet isn't connected.
 - Settings may show "Some settings are managed by your organization". This happens
   because the Delivery Optimization and OneDrive changes are made through policies.
+- With the upload limit on, uploads from this PC (cloud sync, browser uploads,
+  streaming) are capped at the set rate. Games in your lists and copies to devices
+  on your home network are not. Raise the limit or remove it after an ISP plan
+  upgrade.
+- The bufferbloat test uses as much data as a speed test each time it runs.
 
 ## Undo
 
@@ -315,6 +561,10 @@ reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" /v DO
 
 # 7. OneDrive policy
 reg delete "HKLM\SOFTWARE\Policies\Microsoft\OneDrive" /v EnableAutomaticUploadBandwidthManagement /f
+
+# 11. Upload limit (or run NetTune with UPLOAD_LIMIT_MODE=off)
+Get-NetQosPolicy -PolicyStore localhost | Where-Object Name -like 'NetTuneLimit *' |
+    ForEach-Object { Remove-NetQosPolicy -Name $_.Name -PolicyStore localhost -Confirm:$false }
 ```
 
 The rest of step 3 (BBR2 removed, RSS and task offload back on), the QoS Packet
@@ -358,6 +608,41 @@ them needs undoing.
   [Anoop C Nair](https://www.anoopcnair.com/onedrive-upload-speed-windows-ledbat-in-intune/).
 - Killer and SmartByte UDP bug: [PC Gamer](https://www.pcgamer.com/windows-11-killer-nic-udp-bug/).
 - Bufferbloat: [Waveform test](https://www.waveform.com/tools/bufferbloat),
-  [grade thresholds](https://bufferspeed.com/compare/waveform).
-- Left out: flow control, [How2Shout](https://www.how2shout.com/technology/flow-control-in-gaming-should-you-turn-it-on-or-off.html);
-  scripted speed tests, [Cloudflare rate limiting](https://github.com/omacom/omarchy/pull/10473).
+  [grade thresholds](https://bufferspeed.com/compare/waveform),
+  [bufferbloat.net FAQ](https://www.bufferbloat.net/projects/bloat/wiki/Bufferbloat_FAQs/),
+  [What can I do about bufferbloat](https://www.bufferbloat.net/projects/bloat/wiki/What_can_I_do_about_Bufferbloat/),
+  [RFC 8290 (FQ-CoDel)](https://datatracker.ietf.org/doc/html/rfc8290),
+  [tc-cake(8): overhead keywords and diffserv tins](https://man7.org/linux/man-pages/man8/tc-cake.8.html),
+  [sqm-scripts](https://github.com/tohojo/sqm-scripts),
+  [OpenWrt SQM](https://openwrt.org/docs/guide-user/network/traffic-shaping/sqm),
+  [Comcast AQM study](https://arxiv.org/abs/2107.13968),
+  [RFC 8034 (DOCSIS-PIE)](https://www.rfc-editor.org/rfc/rfc8034.html),
+  [cake-autorate](https://github.com/lynxthecat/cake-autorate).
+- Router menus: [GL.iNet SQM](https://docs.gl-inet.com/router/en/4/interface_guide/sqm/),
+  [UniFi Smart Queues](https://help.ui.com/hc/en-us/articles/12648661321367-UniFi-Gateway-Smart-Queues),
+  [EdgeRouter QoS](https://help.uisp.com/hc/en-us/articles/22591187404823-EdgeRouter-Quality-of-Service-QoS),
+  [Asuswrt-Merlin changelog](https://github.com/RMerl/asuswrt-merlin.ng/blob/master/Changelog-3006.txt) and
+  [QoS page source](https://github.com/RMerl/asuswrt-merlin.ng/blob/master/release/src/router/www/QoS_EZQoS.asp),
+  [Netduma congestion control](https://support.netduma.com/docs/dumaos-3/prioritising-traffic/),
+  [eero Labs](https://support.eero.com/hc/en-us/articles/360000709886-What-is-eero-Labs-),
+  [OPNsense: fixing bufferbloat](https://docs.opnsense.org/manual/how-tos/shaper_bufferbloat.html),
+  [pfSense CoDel limiters](https://docs.netgate.com/pfsense/en/latest/recipes/codel-limiters.html),
+  [MikroTik queues](https://help.mikrotik.com/docs/spaces/ROS/pages/328088/Queues),
+  [AT&T BGW320 passthrough](https://www.jeffgeerling.com/blog/2023/self-hosting-att-fiber-internet).
+- Router CPU limits: [OpenWrt forum, MT7621](https://forum.openwrt.org/t/sqm-qos-performance-on-mt7621/70813),
+  [ServeTheHome ER-X](https://www.servethehome.com/ubiquiti-er-x-review-getting-into-the-edgerouter-x/),
+  [x86 routers for gigabit SQM](https://wiki.stoplagging.com/books/technical-guides/page/x86-routers-for-gigabit-sqm-with-openwrt).
+- Path test and packet loss: [Linode: reading MTR](https://www.linode.com/docs/guides/diagnosing-network-issues-with-mtr/),
+  [Microsoft pathping](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/pathping);
+  .NET reports no round-trip time for TTL-expired replies, so NetTune pings each hop directly:
+  [dotnet/runtime issue 29984](https://github.com/dotnet/runtime/issues/29984).
+- Cable modem values: [Arris SB8200 signal levels](https://arris.my.salesforce-sites.com/consumers/articles/knowledge/SB8200-Cable-Signal-Levels),
+  [upstream levels](https://wolfpaulus.com/cable-modem-signal-levels-revisited/),
+  [T3 and T4 timeouts](https://volpefirm.com/docsis_timeout_descriptions/),
+  [DOCSIS monitoring thresholds](https://github.com/zabbix/community-templates/blob/main/Network_Devices/Other/template_docsis_cable_modem/7.2/template_docsis_cable_modem.yaml).
+- Upload limit: [Microsoft: QoS policy precedence and throttling](https://learn.microsoft.com/en-us/windows-server/networking/technologies/qos/qos-policy-manage),
+  [Policy-based QoS: throttling limits aggregate traffic](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/jj159288(v=ws.11)).
+- Load test endpoints: [Cloudflare speed test](https://blog.cloudflare.com/how-does-cloudflares-speed-test-really-work/),
+  [rate limiting of scripted use](https://github.com/omacom/omarchy/pull/10473),
+  [cfspeedtest payload sizes](https://github.com/cysk003/cfspeedtest).
+- Left out: flow control, [How2Shout](https://www.how2shout.com/technology/flow-control-in-gaming-should-you-turn-it-on-or-off.html).

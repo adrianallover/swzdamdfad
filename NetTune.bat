@@ -20,6 +20,9 @@ rem
 rem  The PowerShell code for the adapter, routing, marking and test steps is
 rem  at the end of this file, after the batch code. Batch never runs it;
 rem  each of those steps starts it.
+rem
+rem  Run "NetTune.bat test" to run only the two tests, without changing
+rem  anything and without administrator rights.
 rem ==========================================================================
 
 rem ---- Options -------------------------------------------------------------
@@ -47,7 +50,28 @@ rem  SOCKET_BUFFER_MODE     on or keep
 rem      Larger Winsock default receive buffer, so a game that stalls for a
 rem      moment does not lose the packets queued meanwhile.
 rem  DIAG_MODE              on or off
-rem      Latency, jitter and packet-loss test at the end, about 20 seconds.
+rem      Path test: loss and latency at every router between this PC and
+rem      the internet, to find where packets get lost.
+rem  DIAG_TARGETS           addresses separated by semicolons
+rem      The route to the first one is traced. Put the IP address of your
+rem      game server first to test the route to it.
+rem  DIAG_SECONDS           10 to 600
+rem      Length of the path test. Longer finds rare loss more reliably.
+rem  LOADTEST_MODE          on or off
+rem      Bufferbloat test: latency while the line downloads and uploads at
+rem      full speed, like waveform.com/tools/bufferbloat but also showing
+rem      where the delay builds. Takes about 35 seconds and moves as much
+rem      data as a speed test. Skipped on metered connections.
+rem  UPLOAD_LIMIT_MODE      ask, auto, off, keep, or a number of Mbps
+rem      Limits uploads from this PC just below your line's upload speed,
+rem      so the queue forms inside the PC, where game packets skip it,
+rem      instead of in the modem. Games in the two lists above and your
+rem      home network are not limited. ask offers it when the bufferbloat
+rem      test finds upload delay, auto sets it then without asking, off
+rem      removes it. Helps only traffic from this PC; SQM in the router
+rem      fixes it for every device (NetTune.md explains how).
+rem  UPLOAD_LIMIT_PERCENT   50 to 95
+rem      The limit as a percentage of the measured upload speed.
 rem --------------------------------------------------------------------------
 set "ADAPTER_MODE=on"
 set "WIFI_LOCATION_MODE=auto"
@@ -59,6 +83,11 @@ set "DO_BACKGROUND_PERCENT=20"
 set "ONEDRIVE_MODE=on"
 set "SOCKET_BUFFER_MODE=on"
 set "DIAG_MODE=on"
+set "DIAG_TARGETS=1.1.1.1;8.8.8.8"
+set "DIAG_SECONDS=40"
+set "LOADTEST_MODE=on"
+set "UPLOAD_LIMIT_MODE=ask"
+set "UPLOAD_LIMIT_PERCENT=85"
 
 rem A user variable named ERRORLEVEL would hide the real exit codes.
 set "ERRORLEVEL="
@@ -80,6 +109,11 @@ rem Loads the PowerShell section between the two marker lines at the end of
 rem this file and runs the step named in NT_STEP.
 set "NT_PSRUN=$t=[IO.File]::ReadAllText($env:NT_SELF);$m='#'+'NTPS';$i=$t.IndexOf($m);$j=$t.LastIndexOf($m);if($i -lt 0 -or $j -le $i){exit 3};& ([scriptblock]::Create($t.Substring($i,$j-$i)))"
 
+rem "test" runs only the two tests: nothing changes, so no elevation.
+set "NT_TESTONLY="
+if /i "%~1"=="test" set "NT_TESTONLY=1"
+if defined NT_TESTONLY goto :main
+
 rem ---- Administrator rights (self-elevates) --------------------------------
 rem Exit codes are compared with "0" rather than "if errorlevel 1" throughout,
 rem because some tools (fltmc among them) report errors as negative numbers.
@@ -92,6 +126,7 @@ echo.
 echo  ==============================================================
 echo   NetTune - Windows network tuning for ping, jitter and loss
 echo  ==============================================================
+if defined NT_TESTONLY echo   Test mode: nothing is changed.
 echo.
 echo  Detecting network...
 
@@ -135,6 +170,7 @@ if not defined NT_USERSID goto :uroot_done
 reg query "HKU\%NT_USERSID%" >nul 2>&1
 if "%errorlevel%"=="0" set "UROOT=HKU\%NT_USERSID%"
 :uroot_done
+if defined NT_TESTONLY goto :testonly
 
 rem ---- Plan and confirmation -----------------------------------------------
 echo.
@@ -148,17 +184,22 @@ if /i not "%DSCP_MODE%"=="keep" echo   - Mark game packets DSCP 46, so Wi-Fi and
 if /i not "%DO_BACKGROUND_PERCENT%"=="keep" echo   - Background Windows Update and Store downloads: capped, no uploads to internet peers
 if /i not "%ONEDRIVE_MODE%"=="keep" if not "%NT_ONEDRIVE%"=="0" echo   - OneDrive uploads only with spare bandwidth
 echo   - Check for VPNs, virtual switches, bridges and traffic shapers in the path
-if /i not "%DIAG_MODE%"=="off" echo   - Latency, jitter and packet-loss test
+if /i not "%DIAG_MODE%"=="off" echo   - Path test: packet loss and latency at every router on the way, about %DIAG_SECONDS% seconds
+if /i not "%LOADTEST_MODE%"=="off" echo   - Bufferbloat test: latency at full download and upload speed, about 35 seconds
+if /i "%UPLOAD_LIMIT_MODE%"=="ask" if /i not "%LOADTEST_MODE%"=="off" echo   - If uploads delay your game packets: offer to limit this PC's uploads
+if /i "%UPLOAD_LIMIT_MODE%"=="auto" if /i not "%LOADTEST_MODE%"=="off" echo   - If uploads delay your game packets: limit this PC's uploads
+if /i "%UPLOAD_LIMIT_MODE%"=="off" echo   - Remove NetTune's upload limit for this PC, if one is set
 echo.
 if /i not "%ADAPTER_MODE%"=="keep" echo  Adapters that change restart, so the connection drops for a few seconds.
 if /i not "%ADAPTER_MODE%"=="keep" echo  Don't run this in the middle of a match.
+if /i not "%LOADTEST_MODE%"=="off" echo  The bufferbloat test moves as much data as a speed test; pause big downloads first.
 echo  A restart of Windows is needed afterwards. NetTune.md shows how to undo each change.
 echo.
 choice /c YN /n /m "  Apply these changes now? [Y/N] "
 if errorlevel 2 goto :cancelled
 
 set "STEPN=0"
-set "STEPS=9"
+set "STEPS=11"
 call :step_adapters
 call :step_wifiscan
 call :step_stack
@@ -168,6 +209,8 @@ call :step_do
 call :step_onedrive
 call :step_conflicts
 call :step_diag
+call :step_loadtest
+call :step_shape
 
 echo.
 echo  ==============================================================
@@ -183,6 +226,19 @@ exit /b 0
 echo.
 echo  Restart before you test in game: the socket buffer, packet marking and
 echo  download-cap changes only take full effect after a reboot.
+echo.
+pause
+exit /b 0
+
+:testonly
+set "STEPN=0"
+set "STEPS=2"
+call :step_diag
+call :step_loadtest
+echo.
+echo  ==============================================================
+echo   Tests done. Nothing was changed.
+echo  ==============================================================
 echo.
 pause
 exit /b 0
@@ -317,7 +373,7 @@ if "%V1%"=="99" set "DOP=1"
 if "%V1%"=="100" set "DOP=1"
 if defined DOP echo   [ OK ] Peer-to-peer: already limited to your own network, or off.& goto :do_pct
 reg add "%DOK%" /v DODownloadMode /t REG_DWORD /d 1 /f >nul 2>&1
-if "%errorlevel%"=="0" (echo   [ OK ] Peer-to-peer: your own network only. Windows no longer uploads updates to PCs on the internet.) else (echo   [FAIL] Could not set the Delivery Optimization download mode.)
+if "%errorlevel%"=="0" (echo   [ OK ] Peer-to-peer: limited to your own network by policy, so Windows never uploads updates to PCs on the internet.) else (echo   [FAIL] Could not set the Delivery Optimization download mode.)
 :do_pct
 set "PCTN=0"
 set /a "PCTN=DO_BACKGROUND_PERCENT" >nul 2>&1
@@ -363,13 +419,61 @@ exit /b 0
 
 
 :step_diag
-rem 50 pings each to the router and two public anycast servers. Loss or
-rem jitter at the router points at Wi-Fi or cabling; loss only beyond it
-rem points at the ISP line or route.
-call :hdr "Latency, jitter and packet loss"
+rem Traces the route, then pings the router, every router on the way and
+rem the test servers at the same time. Loss that starts at one router and
+rem continues to the end of the route shows where packets are lost; loss at
+rem a single router in the middle only means it answers pings last.
+call :hdr "Path test: packet loss and latency at every hop"
 if /i "%DIAG_MODE%"=="off" echo   [SKIP] DIAG_MODE is set to off.& exit /b 0
 if not defined NT_PSOK echo   [SKIP] Needs Windows PowerShell.& exit /b 0
 call :ps diag
+exit /b 0
+
+
+:step_loadtest
+rem Pings the router, the ISP's first router and an internet server while
+rem the line downloads, then uploads, at full speed. The delay added under
+rem load is bufferbloat, and where it starts shows which device queues.
+call :hdr "Bufferbloat test: latency at full download and upload speed"
+set "NT_UPBLOAT="
+set "NT_UPTXT="
+set "NT_LIMKBPS="
+set "NT_LIMTXT="
+set "NT_LIMACTIVE="
+if /i "%LOADTEST_MODE%"=="off" echo   [SKIP] LOADTEST_MODE is set to off.& exit /b 0
+if not defined NT_PSOK echo   [SKIP] Needs Windows PowerShell.& exit /b 0
+set "NT_STEP=loadtest"
+for /f "usebackq tokens=1,* delims==" %%A in (`%PS% -NoProfile -NonInteractive -Command "%NT_PSRUN%" ^| findstr /b /c:"NT_"`) do set "%%A=%%B"
+exit /b 0
+
+
+:step_shape
+rem A Windows QoS throttle for all outgoing traffic of this PC, except the
+rem games in the two lists (a policy naming the program takes precedence)
+rem and the home network. The queue then forms inside this PC, where game
+rem packets skip it, instead of in the modem.
+call :hdr "Upload limit for this PC"
+if /i "%UPLOAD_LIMIT_MODE%"=="keep" echo   [SKIP] UPLOAD_LIMIT_MODE is set to keep.& exit /b 0
+if not defined NT_PSOK echo   [SKIP] Needs Windows PowerShell.& exit /b 0
+set "NT_SHAPE_KBPS="
+if /i "%UPLOAD_LIMIT_MODE%"=="off" set "NT_SHAPE_KBPS=0"& goto :shape_apply
+set "ULN=0"
+set /a "ULN=UPLOAD_LIMIT_MODE" >nul 2>&1
+if %ULN% GTR 0 set /a "NT_SHAPE_KBPS=ULN*1000"& goto :shape_apply
+if /i not "%UPLOAD_LIMIT_MODE%"=="ask" if /i not "%UPLOAD_LIMIT_MODE%"=="auto" echo   [SKIP] UPLOAD_LIMIT_MODE must be ask, auto, off, keep or a number of Mbps.& exit /b 0
+if not defined NT_UPBLOAT echo   [SKIP] The bufferbloat test did not measure your uploads, so there is nothing to base a limit on.& exit /b 0
+if defined NT_LIMACTIVE echo   [ OK ] NetTune's upload limit is already on; the bufferbloat test above shows how it performs.& exit /b 0
+if not defined NT_LIMKBPS echo   [SKIP] The bufferbloat test did not measure your uploads, so there is nothing to base a limit on.& exit /b 0
+if %NT_UPBLOAT% LSS 30 echo   [ OK ] Uploading adds only %NT_UPBLOAT% ms to your ping, so no limit is needed.& exit /b 0
+set "NT_SHAPE_KBPS=%NT_LIMKBPS%"
+if /i "%UPLOAD_LIMIT_MODE%"=="auto" goto :shape_apply
+echo   Uploading added %NT_UPBLOAT% ms to your ping. Limiting this PC's uploads to %NT_LIMTXT% Mbps,
+echo   %UPLOAD_LIMIT_PERCENT% percent of the measured %NT_UPTXT% Mbps, keeps that delay away from your games.
+echo   Uploads from this PC get that much slower. Other devices are not covered: SQM in the router is the full fix.
+choice /c YN /n /m "  Set this upload limit? [Y/N] "
+if errorlevel 2 echo   [SKIP] No upload limit set.& exit /b 0
+:shape_apply
+call :ps shape
 exit /b 0
 
 
@@ -735,6 +839,597 @@ function Measure-Target([string]$name, [string]$address, [int]$count) {
     $r
 }
 
+# ---- Path and bufferbloat tests ---------------------------------------------
+# The measuring code is C#, compiled when a test step starts. It sends the
+# pings concurrently on a steady schedule, times them, and makes the load.
+$script:ProbeCs = @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace NetTune
+{
+    // One ping target. Rtt holds one entry per probe: milliseconds, or -1 when lost.
+    public sealed class Target
+    {
+        public string Name;
+        public string Address;
+        public int IntervalMs = 200;
+        public readonly List<double> Rtt = new List<double>();
+        public readonly List<double> At = new List<double>();
+        internal double Due;
+    }
+
+    // Bytes through the internet adapter, sampled during a measurement.
+    public sealed class Counters
+    {
+        public double At;
+        public long Rx;
+        public long Tx;
+    }
+
+    public sealed class Totals
+    {
+        public long RxPackets;
+        public long TxPackets;
+        public long RxDiscards;
+        public long RxErrors;
+        public long TxDiscards;
+        public long TxErrors;
+        public long TcpSent;
+        public long TcpResent;
+        public long UdpErrors;
+    }
+
+    public static class Probe
+    {
+        static readonly byte[] Payload = new byte[32];
+
+        // Route to dest: entry i is the router that answered at TTL i+1, or ""
+        // when none did. Ends with the destination when it answers.
+        public static string[] Trace(string dest, int maxHops, int timeoutMs, int rounds)
+        {
+            string[] hops = new string[maxHops];
+            for (int i = 0; i < maxHops; i++) hops[i] = "";
+            int last = maxHops;
+            for (int r = 0; r < rounds; r++)
+            {
+                Ping[] pings = new Ping[last];
+                Task<PingReply>[] tasks = new Task<PingReply>[last];
+                for (int i = 0; i < last; i++)
+                {
+                    if (hops[i].Length > 0) continue;
+                    pings[i] = new Ping();
+                    try { tasks[i] = pings[i].SendPingAsync(dest, timeoutMs, Payload, new PingOptions(i + 1, false)); }
+                    catch (Exception) { tasks[i] = null; }
+                }
+                int reached = last;
+                for (int i = 0; i < last; i++)
+                {
+                    if (tasks[i] == null) continue;
+                    try
+                    {
+                        PingReply rep = tasks[i].Result;
+                        if (rep.Status == IPStatus.Success)
+                        {
+                            hops[i] = rep.Address.ToString();
+                            if (i + 1 < reached) reached = i + 1;
+                        }
+                        else if (rep.Status == IPStatus.TtlExpired || rep.Status == IPStatus.TimeExceeded)
+                        {
+                            hops[i] = rep.Address.ToString();
+                        }
+                    }
+                    catch (Exception) { }
+                }
+                for (int i = 0; i < pings.Length; i++) if (pings[i] != null) pings[i].Dispose();
+                last = reached;
+                bool open = false;
+                for (int i = 0; i < last; i++) if (hops[i].Length == 0) open = true;
+                if (!open) break;
+            }
+            string[] result = new string[last];
+            Array.Copy(hops, result, last);
+            return result;
+        }
+
+        static NetworkInterface FindNic(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            try
+            {
+                foreach (NetworkInterface n in NetworkInterface.GetAllNetworkInterfaces())
+                    if (string.Equals(n.Id, id, StringComparison.OrdinalIgnoreCase)) return n;
+            }
+            catch (Exception) { }
+            return null;
+        }
+
+        public static Totals ReadTotals(string nicId)
+        {
+            Totals t = new Totals();
+            NetworkInterface nic = FindNic(nicId);
+            if (nic != null)
+            {
+                try
+                {
+                    IPInterfaceStatistics s = nic.GetIPStatistics();
+                    t.RxPackets = s.UnicastPacketsReceived + s.NonUnicastPacketsReceived;
+                    t.TxPackets = s.UnicastPacketsSent + s.NonUnicastPacketsSent;
+                    t.RxDiscards = s.IncomingPacketsDiscarded;
+                    t.RxErrors = s.IncomingPacketsWithErrors;
+                    t.TxDiscards = s.OutgoingPacketsDiscarded;
+                    t.TxErrors = s.OutgoingPacketsWithErrors;
+                }
+                catch (Exception) { }
+            }
+            try
+            {
+                IPGlobalProperties g = IPGlobalProperties.GetIPGlobalProperties();
+                TcpStatistics tcp = g.GetTcpIPv4Statistics();
+                t.TcpSent = tcp.SegmentsSent;
+                t.TcpResent = tcp.SegmentsResent;
+                t.UdpErrors = g.GetUdpIPv4Statistics().IncomingDatagramsWithErrors;
+            }
+            catch (Exception) { }
+            return t;
+        }
+
+        // Pings every target on its own schedule until durationMs has passed,
+        // or until the load has moved maxBytes and minMs has passed. Samples the
+        // adapter's byte counters every 250 ms into rates.
+        public static void Run(Target[] targets, int durationMs, int minMs, long maxBytes, int timeoutMs, Load load, string nicId, List<Counters> rates)
+        {
+            NetworkInterface nic = FindNic(nicId);
+            Stopwatch sw = Stopwatch.StartNew();
+            List<Task> pending = new List<Task>();
+            foreach (Target t in targets) t.Due = 0;
+            double nextRate = 0;
+            while (true)
+            {
+                double now = sw.Elapsed.TotalMilliseconds;
+                if (now >= durationMs) break;
+                if (load != null && maxBytes > 0 && now >= minMs && load.Bytes >= maxBytes) break;
+                foreach (Target t in targets)
+                {
+                    if (now < t.Due) continue;
+                    t.Due += t.IntervalMs;
+                    if (t.Due < now) t.Due = now + t.IntervalMs;
+                    pending.Add(Send(t, sw, timeoutMs));
+                }
+                if (nic != null && rates != null && now >= nextRate)
+                {
+                    nextRate += 250;
+                    try
+                    {
+                        IPInterfaceStatistics s = nic.GetIPStatistics();
+                        Counters c = new Counters();
+                        c.At = sw.Elapsed.TotalMilliseconds;
+                        c.Rx = s.BytesReceived;
+                        c.Tx = s.BytesSent;
+                        rates.Add(c);
+                    }
+                    catch (Exception) { }
+                }
+                pending.RemoveAll(x => x.IsCompleted);
+                Thread.Sleep(5);
+            }
+            try { Task.WaitAll(pending.ToArray(), timeoutMs + 1000); } catch (Exception) { }
+        }
+
+        static async Task Send(Target t, Stopwatch sw, int timeoutMs)
+        {
+            double start = sw.Elapsed.TotalMilliseconds;
+            double rtt = -1;
+            using (Ping p = new Ping())
+            {
+                try
+                {
+                    PingReply r = await p.SendPingAsync(t.Address, timeoutMs, Payload).ConfigureAwait(false);
+                    if (r.Status == IPStatus.Success)
+                    {
+                        // The ICMP round trip has 1 ms resolution; below 1 ms the
+                        // measured wait is used instead.
+                        rtt = r.RoundtripTime;
+                        if (rtt < 1)
+                        {
+                            double el = sw.Elapsed.TotalMilliseconds - start;
+                            rtt = el < 1 ? el : 1;
+                        }
+                    }
+                }
+                catch (Exception) { }
+            }
+            lock (t.Rtt)
+            {
+                t.Rtt.Add(rtt);
+                t.At.Add(start);
+            }
+        }
+    }
+
+    // Download or upload load against an HTTP endpoint, on several connections.
+    public sealed class Load
+    {
+        long bytes;
+        int errors;
+        int limited;
+        volatile bool stop;
+        readonly List<HttpWebRequest> active = new List<HttpWebRequest>();
+        readonly List<Task> loops = new List<Task>();
+        public string LastError = "";
+
+        public long Bytes { get { return Interlocked.Read(ref bytes); } }
+        public int Errors { get { return errors; } }
+        public int Limited { get { return limited; } }
+
+        public static void Prepare()
+        {
+            if (ServicePointManager.DefaultConnectionLimit < 32) ServicePointManager.DefaultConnectionLimit = 32;
+            ServicePointManager.Expect100Continue = false;
+            try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch (Exception) { }
+        }
+
+        // urls: the same download in decreasing sizes. A server error other
+        // than "too many requests" moves every connection to the next size.
+        public void StartDownload(string[] urls, int streams)
+        {
+            for (int i = 0; i < streams; i++) loops.Add(Task.Run(() => DownLoop(urls)));
+        }
+
+        // Uploads chunkBytes per request; a server error other than "too many
+        // requests" quarters the size, down to 1 MB.
+        public void StartUpload(string url, int streams, int chunkBytes)
+        {
+            byte[] data = new byte[chunkBytes];
+            new Random().NextBytes(data);
+            upLen = chunkBytes;
+            for (int i = 0; i < streams; i++) loops.Add(Task.Run(() => UpLoop(url, data)));
+        }
+
+        void Track(HttpWebRequest r, bool add)
+        {
+            if (r == null) return;
+            lock (active) { if (add) active.Add(r); else active.Remove(r); }
+        }
+
+        // 0 = the server asked to slow down (429), 1 = another HTTP error
+        // answer, 2 = no answer (connection reset, timeout, abort).
+        int Failed(Exception ex)
+        {
+            WebException we = ex as WebException;
+            HttpWebResponse hr = we == null ? null : we.Response as HttpWebResponse;
+            int kind = 2;
+            if (hr != null && (int)hr.StatusCode == 429) { Interlocked.Increment(ref limited); kind = 0; }
+            else { Interlocked.Increment(ref errors); LastError = ex.Message; if (hr != null) kind = 1; }
+            if (hr != null) hr.Close();
+            return kind;
+        }
+
+        int size;
+
+        async Task DownLoop(string[] urls)
+        {
+            byte[] buf = new byte[65536];
+            while (!stop)
+            {
+                HttpWebRequest req = null;
+                bool failed = false;
+                int used = Volatile.Read(ref size);
+                try
+                {
+                    req = (HttpWebRequest)WebRequest.Create(urls[used]);
+                    req.UserAgent = "NetTune";
+                    req.AutomaticDecompression = DecompressionMethods.None;
+                    Track(req, true);
+                    using (WebResponse resp = await req.GetResponseAsync().ConfigureAwait(false))
+                    using (Stream s = resp.GetResponseStream())
+                    {
+                        int n;
+                        while (!stop && (n = await s.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false)) > 0)
+                            Interlocked.Add(ref bytes, n);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!stop)
+                    {
+                        if (Failed(ex) == 1 && used + 1 < urls.Length) Interlocked.CompareExchange(ref size, used + 1, used);
+                        failed = true;
+                    }
+                }
+                finally { Track(req, false); }
+                if (failed) await Task.Delay(1000).ConfigureAwait(false);
+            }
+        }
+
+        int upLen;
+
+        async Task UpLoop(string url, byte[] data)
+        {
+            int fails = 0;
+            while (!stop)
+            {
+                HttpWebRequest req = null;
+                bool failed = false;
+                int len = Volatile.Read(ref upLen);
+                try
+                {
+                    req = (HttpWebRequest)WebRequest.Create(url);
+                    req.UserAgent = "NetTune";
+                    req.Method = "POST";
+                    req.ContentType = "application/octet-stream";
+                    req.ContentLength = len;
+                    req.AllowWriteStreamBuffering = false;
+                    Track(req, true);
+                    using (Stream s = await req.GetRequestStreamAsync().ConfigureAwait(false))
+                    {
+                        int off = 0;
+                        while (!stop && off < len)
+                        {
+                            int n = Math.Min(65536, len - off);
+                            await s.WriteAsync(data, off, n).ConfigureAwait(false);
+                            off += n;
+                            Interlocked.Add(ref bytes, n);
+                        }
+                    }
+                    if (!stop) using (WebResponse resp = await req.GetResponseAsync().ConfigureAwait(false)) { }
+                    fails = 0;
+                }
+                catch (Exception ex)
+                {
+                    if (!stop)
+                    {
+                        // A server that refuses the size often just resets the
+                        // connection, so two failures in a row count as well.
+                        int kind = Failed(ex);
+                        if (kind != 0) fails++;
+                        if ((kind == 1 || fails >= 2) && len > (1 << 20)) { Interlocked.CompareExchange(ref upLen, Math.Max(1 << 20, len / 4), len); fails = 0; }
+                        failed = true;
+                    }
+                }
+                finally { Track(req, false); }
+                if (failed) await Task.Delay(1000).ConfigureAwait(false);
+            }
+        }
+
+        // Aborting can finish a request on this thread, which removes it from
+        // the list, so the list is copied before the aborts.
+        public void Stop()
+        {
+            stop = true;
+            HttpWebRequest[] all;
+            lock (active) { all = active.ToArray(); }
+            foreach (HttpWebRequest r in all) { try { r.Abort(); } catch (Exception) { } }
+            try { Task.WaitAll(loops.ToArray(), 5000); } catch (Exception) { }
+        }
+    }
+}
+'@
+
+$script:DownUrls = [string[]]@('https://speed.cloudflare.com/__down?bytes=100000000', 'https://speed.cloudflare.com/__down?bytes=25000000')
+$script:UpUrl = 'https://speed.cloudflare.com/__up'
+
+function Import-Probe {
+    if ('NetTune.Probe' -as [type]) { return $true }
+    try {
+        Add-Type -TypeDefinition $script:ProbeCs -Language CSharp -IgnoreWarnings -WarningAction SilentlyContinue -ErrorAction Stop
+        return $true
+    } catch {
+        Warn ('The test code could not be compiled: ' + ([string]$_.Exception.Message).Split("`n")[0].Trim())
+        return $false
+    }
+}
+
+# Home-network and other private ranges. Carrier-grade NAT (100.64.0.0/10)
+# is the ISP's, so it does not count as private here.
+function Test-PrivateIP([string]$ip) {
+    $o = $ip.Split('.')
+    if ($o.Count -ne 4) { return $ip -match '^(fe80|fc|fd)' }
+    $a = [int]$o[0]
+    $b = [int]$o[1]
+    ($a -eq 10) -or ($a -eq 172 -and $b -ge 16 -and $b -le 31) -or ($a -eq 192 -and $b -eq 168) -or ($a -eq 169 -and $b -eq 254)
+}
+
+# Mobile data and connections marked as metered in Settings.
+function Test-Metered {
+    try {
+        $null = [Windows.Networking.Connectivity.NetworkInformation, Windows.Networking.Connectivity, ContentType = WindowsRuntime]
+        $p = [Windows.Networking.Connectivity.NetworkInformation]::GetInternetConnectionProfile()
+        if ($p) { return @('Fixed', 'Variable') -contains [string]$p.GetConnectionCost().NetworkCostType }
+    } catch { }
+    $false
+}
+
+function Get-Gateway {
+    $route = Get-InternetRoute -Physical
+    if (-not $route) { $route = Get-InternetRoute }
+    $gw = [string]$route.NextHop
+    if ($gw -match '^(0\.0\.0\.0|::)?$') { return '' }
+    $gw
+}
+
+# The test addresses from DIAG_TARGETS, names resolved to IPv4 addresses.
+function Get-DiagTargets {
+    $out = @()
+    foreach ($x in ([string]$env:DIAG_TARGETS).Split(';')) {
+        $x = $x.Trim()
+        if (-not $x) { continue }
+        $ip = $null
+        if ([System.Net.IPAddress]::TryParse($x, [ref]$ip)) { $out += $ip.ToString(); continue }
+        $a = @([System.Net.Dns]::GetHostAddresses($x) | Where-Object { [string]$_.AddressFamily -eq 'InterNetwork' })
+        if ($a.Count) { $out += $a[0].ToString() } else { Warn ('DIAG_TARGETS: ' + $x + ' could not be resolved and is skipped.') }
+    }
+    if (-not $out.Count) { $out = @('1.1.1.1', '8.8.8.8') }
+    @($out | Select-Object -Unique)
+}
+
+# An integer setting from the environment, or $default when it is missing
+# or not a number.
+function Get-IntSetting([string]$name, [int]$default) {
+    $v = 0
+    if ([int]::TryParse([string][Environment]::GetEnvironmentVariable($name), [ref]$v)) { return $v }
+    $default
+}
+
+function New-Target([string]$name, [string]$address, [int]$interval) {
+    $t = New-Object NetTune.Target
+    $t.Name = $name
+    $t.Address = $address
+    $t.IntervalMs = $interval
+    $t
+}
+
+# Loss and latency of one target, over the probes sent from $from ms on.
+# Lost probes count as loss; the latency figures use the answered ones.
+function Get-Stats($t, [double]$from) {
+    $rtt = $t.Rtt.ToArray()
+    $at = $t.At.ToArray()
+    $ok = New-Object 'System.Collections.Generic.List[double]'
+    $sent = 0
+    $lost = 0
+    for ($i = 0; $i -lt $rtt.Count; $i++) {
+        if ($at[$i] -lt $from) { continue }
+        $sent++
+        if ($rtt[$i] -lt 0) { $lost++ } else { $ok.Add($rtt[$i]) }
+    }
+    $s = [pscustomobject]@{ Sent = $sent; Lost = $lost; Loss = $null; Med = $null; Avg = $null; P95 = $null; Max = $null; Jitter = $null }
+    if ($sent) { $s.Loss = 100.0 * $lost / $sent }
+    if ($ok.Count) {
+        $d = 0.0
+        for ($i = 1; $i -lt $ok.Count; $i++) { $d += [Math]::Abs($ok[$i] - $ok[$i - 1]) }
+        $s.Jitter = if ($ok.Count -gt 1) { $d / ($ok.Count - 1) } else { 0.0 }
+        $a = $ok.ToArray()
+        [Array]::Sort($a)
+        $s.Avg = ($a | Measure-Object -Average).Average
+        $s.Med = $a[[int][Math]::Floor(($a.Count - 1) / 2)]
+        $s.P95 = $a[[int][Math]::Max(0, [Math]::Ceiling(0.95 * $a.Count) - 1)]
+        $s.Max = $a[$a.Count - 1]
+    }
+    $s
+}
+
+# Median throughput in Mbps over 1-second windows from $from ms on.
+function Get-Mbps($rates, [bool]$rx, [double]$from) {
+    $r = @($rates | Where-Object { $_.At -ge $from })
+    $v = New-Object 'System.Collections.Generic.List[double]'
+    $j = 0
+    for ($i = 0; $i -lt $r.Count; $i++) {
+        while ($j -lt $r.Count -and $r[$j].At - $r[$i].At -lt 1000) { $j++ }
+        if ($j -ge $r.Count) { break }
+        $b = if ($rx) { $r[$j].Rx - $r[$i].Rx } else { $r[$j].Tx - $r[$i].Tx }
+        $v.Add(8.0 * $b / (($r[$j].At - $r[$i].At) / 1000.0) / 1e6)
+    }
+    if (-not $v.Count) { return $null }
+    $a = $v.ToArray()
+    [Array]::Sort($a)
+    $a[[int][Math]::Floor(($a.Count - 1) / 2)]
+}
+
+function Format-Mbps([double]$m) {
+    if ($m -ge 100) { '{0:0}' -f $m } elseif ($m -ge 10) { '{0:0.0}' -f $m } else { '{0:0.00}' -f $m }
+}
+
+# Path test: pings every target for $seconds, in slices so progress shows.
+function Invoke-PathProbe($targets, [int]$seconds) {
+    [Console]::Error.Write('  Measuring for ' + $seconds + ' seconds ')
+    $left = $seconds
+    while ($left -gt 0) {
+        $s = [Math]::Min(5, $left)
+        [NetTune.Probe]::Run($targets, $s * 1000, 0, 0, 1000, $null, '', $null)
+        $left -= $s
+        [Console]::Error.Write('.')
+    }
+    Say ''
+}
+
+# One phase of the bufferbloat test: idle, down or up. The first 2 seconds
+# of a loaded phase are left out, while the connections ramp up.
+function Invoke-Phase([string]$mode, $targets, [string]$nic, [int]$ms) {
+    foreach ($t in $targets) { $t.Rtt.Clear(); $t.At.Clear() }
+    $rates = New-Object 'System.Collections.Generic.List[NetTune.Counters]'
+    $load = $null
+    $max = 0
+    if ($mode -eq 'down') {
+        $load = New-Object NetTune.Load
+        $load.StartDownload($script:DownUrls, 6)
+        $max = 2500MB
+    } elseif ($mode -eq 'up') {
+        $load = New-Object NetTune.Load
+        $load.StartUpload($script:UpUrl, 4, 32MB)
+        $max = 600MB
+    }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    [NetTune.Probe]::Run($targets, $ms, 6000, $max, 1000, $load, $nic, $rates)
+    if ($load) { $load.Stop() }
+    $skip = if ($load) { 2000 } else { 0 }
+    $r = [pscustomobject]@{ Mode = $mode; Stats = @{}; Mbps = $null; Errors = 0; Limited = 0; LastError = '' }
+    foreach ($t in $targets) { $r.Stats[$t.Name] = Get-Stats $t $skip }
+    if ($load) {
+        $r.Mbps = Get-Mbps $rates ($mode -eq 'down') $skip
+        if ($null -eq $r.Mbps -and $sw.Elapsed.TotalSeconds -gt 0) { $r.Mbps = 8.0 * $load.Bytes / $sw.Elapsed.TotalSeconds / 1e6 }
+        $r.Errors = $load.Errors
+        $r.Limited = $load.Limited
+        $r.LastError = $load.LastError
+    }
+    $r
+}
+
+# Median latency added under load in ms, never below 0; $null without data.
+function Get-Added($idle, $load, [string]$name) {
+    $a = $idle.Stats[$name]
+    $b = $load.Stats[$name]
+    if (-not $a -or -not $b -or $null -eq $a.Med -or $null -eq $b.Med) { return $null }
+    [Math]::Max(0.0, $b.Med - $a.Med)
+}
+
+# Waveform's grades for the latency added under load.
+function Get-Grade([double]$ms) {
+    if ($ms -lt 5) { 'A+' } elseif ($ms -lt 30) { 'A' } elseif ($ms -lt 60) { 'B' } elseif ($ms -lt 200) { 'C' } elseif ($ms -lt 400) { 'D' } else { 'F' }
+}
+
+function Format-HopLine($hop, [string]$addr, $s, [string]$note) {
+    $line = '  {0,3}  {1,-17}' -f $hop, $addr
+    if (-not $s -or -not $s.Sent) { return $line }
+    if ($s.Loss -ge 100) { return ($line + '   does not answer pings' + $(if ($note) { ' - ' + $note })) }
+    $line += ('{0,6:0.0}%  {1,6:0.0}  {2,6:0}  {3,6:0}' -f $s.Loss, $s.Avg, $s.P95, $s.Max)
+    if ($note) { $line += '   ' + $note }
+    $line
+}
+
+# The sequential test used when the test code cannot be compiled.
+function Invoke-QuickDiag([string]$gw, $dests) {
+    $router = $null
+    if ($gw) { $router = Measure-Target ('Router ' + $gw) $gw 50 }
+    $net = @($dests | Select-Object -First 2 | ForEach-Object { Measure-Target $_ $_ 50 })
+    Say ''
+    if ($router -and $router.Loss -ge 100) {
+        Info 'The router does not answer pings, so the local link is not measured on its own.'
+        $router = $null
+    }
+    $answered = @($net | Where-Object { $_.Loss -lt 100 })
+    if (-not $answered.Count) {
+        Warn 'The test servers did not answer. Pings are probably blocked on this network, so this test says nothing about games.'
+        return
+    }
+    $netLoss = ($answered | Measure-Object -Property Loss -Maximum).Maximum
+    $netJitter = ($answered | Measure-Object -Property Jitter -Maximum).Maximum
+    if ($router -and ($router.Loss -ge 2 -or $router.Jitter -gt 5)) {
+        Warn 'Loss or jitter already between this PC and the router: Wi-Fi signal or interference, the cable, or the router itself.'
+    } elseif ($netLoss -ge 1) {
+        Warn 'The local link is clean, but packets are lost beyond the router: the modem, the ISP line or its routing.'
+    } elseif ($netJitter -gt 8) {
+        Warn 'Jitter beyond the router. If it rises while something downloads, that is bufferbloat.'
+    } else {
+        Ok 'No packet loss and low jitter on the path.'
+    }
+}
+
 switch ($env:NT_STEP) {
 
 'detect' {
@@ -990,39 +1685,331 @@ switch ($env:NT_STEP) {
     if (@(Get-DeliveryOptimizationStatus | Where-Object { [string]$_.Status -match 'Download' }).Count) {
         Info 'Windows Update or the Store is downloading right now, which can raise the numbers below.'
     }
-    $route = Get-InternetRoute -Physical
-    if (-not $route) { $route = Get-InternetRoute }
-    $gw = [string]$route.NextHop
-    $router = $null
-    if ($gw -and $gw -ne '0.0.0.0') { $router = Measure-Target ('Router ' + $gw) $gw 50 }
-    $net = @(
-        (Measure-Target 'Cloudflare 1.1.1.1' '1.1.1.1' 50),
-        (Measure-Target 'Google 8.8.8.8' '8.8.8.8' 50)
-    )
-    Say ''
-    if ($router -and $router.Loss -ge 100) {
-        Info 'The router does not answer pings, so the local link is not measured on its own.'
-        $router = $null
+    $gw = Get-Gateway
+    $dests = @(Get-DiagTargets)
+    if (-not (Import-Probe)) { Invoke-QuickDiag $gw $dests; return }
+    $secs = [Math]::Max(10, [Math]::Min(600, (Get-IntSetting 'DIAG_SECONDS' 40)))
+    Say ('  Tracing the route to ' + $dests[0] + '...')
+    $trace = @([NetTune.Probe]::Trace($dests[0], 24, 1000, 3))
+    $hops = New-Object 'System.Collections.Generic.List[object]'
+    for ($i = 0; $i -lt $trace.Count; $i++) {
+        $addr = [string]$trace[$i]
+        if ($i -eq 0 -and -not $addr) { $addr = $gw }
+        $hops.Add([pscustomobject]@{ Hop = $i + 1; Address = $addr; Role = ''; Target = $null })
     }
-    $answered = @($net | Where-Object { $_.Loss -lt 100 })
-    if (-not $answered.Count) {
-        Warn 'Neither public server answered. Pings are probably blocked on this network, so this test says nothing about games.'
-    } else {
-        $netLoss = ($answered | Measure-Object -Property Loss -Maximum).Maximum
-        $netJitter = ($answered | Measure-Object -Property Jitter -Maximum).Maximum
-        if ($router -and ($router.Loss -ge 2 -or $router.Jitter -gt 5)) {
-            Warn 'Loss or jitter already between this PC and the router: Wi-Fi signal or interference, the cable, or the router itself.'
-            Info 'Ethernet, a 5 GHz channel, or moving closer to the router fixes most of this.'
-        } elseif ($netLoss -ge 1) {
-            Warn 'The local link is clean, but packets are lost beyond the router: the modem, the ISP line or its routing. Restart the modem; if it stays, contact the ISP.'
-        } elseif ($netJitter -gt 8) {
-            Warn 'Jitter beyond the router. If it rises while something downloads, that is bufferbloat: turn on SQM (CAKE or fq_codel) in the router.'
+    while ($hops.Count -and -not $hops[$hops.Count - 1].Address) { $hops.RemoveAt($hops.Count - 1) }
+    if (-not $hops.Count -and $gw) { $hops.Add([pscustomobject]@{ Hop = 1; Address = $gw; Role = ''; Target = $null }) }
+    $reached = $hops.Count -and $hops[$hops.Count - 1].Address -eq $dests[0]
+    # The ISP starts at the first public address after your router.
+    $ispHop = 0
+    foreach ($h in $hops) {
+        if (-not $h.Address) { continue }
+        if ($h.Hop -eq 1) { $h.Role = 'your router'; continue }
+        if ($reached -and $h.Hop -eq $hops[$hops.Count - 1].Hop) { $h.Role = 'test server'; continue }
+        if (Test-PrivateIP $h.Address) { if (-not $ispHop) { $h.Role = 'private: second router or ISP' }; continue }
+        if (-not $ispHop) { $ispHop = $h.Hop; $h.Role = 'your ISP' }
+    }
+    # Routers and the test servers are pinged 5 times a second, the routers
+    # in between twice: they limit how often they answer.
+    $seen = @{}
+    $targets = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($h in $hops) {
+        if (-not $h.Address) { continue }
+        if ($seen.ContainsKey($h.Address)) { $h.Target = $seen[$h.Address]; continue }
+        $iv = if ($h.Hop -eq 1 -or $h.Role -eq 'test server') { 200 } else { 500 }
+        $h.Target = New-Target ('hop ' + $h.Hop) $h.Address $iv
+        $seen[$h.Address] = $h.Target
+        $targets.Add($h.Target)
+    }
+    $extra = @()
+    foreach ($d in $dests) {
+        if ($seen.ContainsKey($d)) { continue }
+        $t = New-Target $d $d 200
+        $seen[$d] = $t
+        $targets.Add($t)
+        $extra += $t
+    }
+    Invoke-PathProbe $targets.ToArray() $secs
+    $st = @{}
+    foreach ($t in $targets) { $st[$t.Address] = Get-Stats $t 0 }
+    Say ''
+    Say '  Hop  Address              Loss     Avg     95%   Worst  (ms)'
+    foreach ($h in $hops) {
+        if (-not $h.Address) { Say ('  {0,3}  (no answer)' -f $h.Hop); continue }
+        Say (Format-HopLine $h.Hop $h.Address $st[$h.Address] $h.Role)
+    }
+    foreach ($t in $extra) { Say (Format-HopLine '' $t.Address $st[$t.Address] $(if ($t.Address -eq $dests[0]) { 'test server' } else { 'other test server' })) }
+    Say ''
+    $dstats = @($dests | ForEach-Object { $st[$_] } | Where-Object { $_ -and $_.Sent -and $_.Loss -lt 100 })
+    if (-not $dstats.Count) {
+        Warn 'The test servers did not answer pings. Pings are probably blocked on this network, so this test says nothing about games.'
+        return
+    }
+    $main = $st[$dests[0]]
+    $worst = ($dstats | Measure-Object -Property Loss -Maximum).Maximum
+    $router = if ($hops.Count -and $hops[0].Address) { $st[$hops[0].Address] } else { $null }
+    $wifi = $false
+    $inet = Get-InternetAdapter
+    if ($inet) { $wifi = Test-Wifi $inet }
+    $lossyDest = @($dests | Where-Object { $st[$_] -and $st[$_].Sent -and $st[$_].Loss -lt 100 -and $st[$_].Loss -ge 1 })
+    if ($lossyDest.Count) {
+        # Where the loss starts: the first router of the last run of lossy
+        # routers that continues to the test server. A router that loses
+        # pings while the ones after it do not just answers pings last.
+        $mainLossy = $lossyDest -contains $dests[0]
+        $origin = $null
+        if ($mainLossy) {
+            $thr = [Math]::Max(0.5, $main.Loss / 2)
+            $chain = @($hops | Where-Object { $_.Address })
+            if (-not $reached) { $chain += [pscustomobject]@{ Hop = 0; Address = $dests[0]; Role = 'test server'; Target = $null } }
+            foreach ($h in $chain) {
+                $s = $st[$h.Address]
+                if (-not $s -or -not $s.Sent -or $s.Loss -ge 100) { continue }
+                if ($s.Loss -lt $thr) { $origin = $null } elseif (-not $origin) { $origin = $h }
+            }
+            if ($origin -and $origin.Address -eq $dests[0]) { $origin = $null }
+        }
+        $where = if ($dstats.Count -gt 1 -and $lossyDest.Count -eq $dstats.Count) { 'on every test server' } else { 'to ' + ($lossyDest -join ' and ') }
+        $lo = ($st[$lossyDest[0]]).Loss
+        foreach ($d in $lossyDest) { if ($st[$d].Loss -lt $lo) { $lo = $st[$d].Loss } }
+        $amount = if ([Math]::Round($lo, 1) -eq [Math]::Round($worst, 1)) { '{0:0.0}%' -f $worst } else { '{0:0.0} to {1:0.0}%' -f $lo, $worst }
+        Warn ($amount + ' of packets are lost ' + $where + '.')
+        if (-not $mainLossy) {
+            Info ('The route to ' + $dests[0] + ' is clean, so your line is fine: the loss is on the way to the other server, or it limits ping answers.')
+        } elseif (-not $origin) {
+            Info ('No router on the way loses packets, only ' + $dests[0] + ' itself: that server limits its ping answers.')
+        } elseif ($origin.Hop -eq 1) {
+            Warn 'The loss already starts between this PC and your router.'
+            if ($wifi) {
+                Info 'On Wi-Fi this is the radio link: weak signal, interference or a crowded channel. Ethernet removes it;'
+                Info 'otherwise move closer, use 5 or 6 GHz, or change the router''s channel.'
+            } else {
+                Info 'On Ethernet: replace the cable, try another port on the router, and check the link speed in step 1.'
+            }
+        } elseif ($ispHop -eq 0 -or $origin.Hop -le $ispHop) {
+            Warn ('The loss starts at hop ' + $origin.Hop + ' (' + $origin.Address + '): between your router and your ISP.')
+            Info 'That is the modem or fibre box, the line itself, or the ISP''s first equipment. Restart the modem; check its'
+            Info 'signal page (NetTune.md lists the values); if it stays, report it to the ISP with this table.'
         } else {
-            Ok 'No packet loss and low jitter on the path.'
+            Warn ('The loss starts at hop ' + $origin.Hop + ' (' + $origin.Address + '), inside the ISP''s network or beyond.')
+            Info 'Nothing in your home causes this. Report it to the ISP with this table; loss only in the evening means congestion.'
+        }
+    } else {
+        Ok ('No packet loss on the path ({0:0.0}% at most).' -f $worst)
+        Info 'If games still lose packets, the loss comes with load (see the bufferbloat test) or at busy times: run "NetTune.bat test" then.'
+    }
+    if ($router -and $router.Sent -and $router.Loss -lt 100 -and $null -ne $router.Max) {
+        if ($router.Loss -ge 2 -and $main -and $main.Sent -and $main.Loss -lt 1) {
+            Info 'Your router drops some pings but the servers beyond it do not: the router answers pings last. Not a problem.'
+        }
+        if ($router.Max -ge 30 -or $router.P95 -ge 10) {
+            Warn ('Lag spikes between this PC and your router: up to {0:0} ms, where 1 to 3 ms is normal.' -f $router.Max)
+            if ($wifi) { Info 'On Wi-Fi: background scans, power saving or interference. Steps 1 and 2 cover the PC side; Ethernet removes it.' }
+            else { Info 'On Ethernet this is unusual: check for power saving on the adapter (step 1) and replace the cable.' }
         }
     }
-    Info 'Routers answer pings at low priority, so an odd lost router ping is normal.'
-    Info 'Bufferbloat only shows under load: test at waveform.com/tools/bufferbloat. Below grade A, turn on SQM in the router.'
+    if ($main -and $null -ne $main.Med -and $null -ne $main.P95 -and $main.P95 - $main.Med -ge 15) {
+        Info ('Latency to ' + $dests[0] + ' varies: usually {0:0} ms, but 1 in 20 pings takes {1:0} ms or more.' -f $main.Med, $main.P95)
+    }
+}
+
+'loadtest' {
+    if (Test-Metered) { Skip 'This connection is set as metered, so the test does not use up your data. Set it to unmetered in Settings to run it.'; return }
+    if (-not (Wait-Internet 15)) { Fail 'No internet connection, so there is nothing to test.'; return }
+    if (-not (Import-Probe)) { Skip 'Needs the test code, which could not be compiled.'; return }
+    if (@(Get-DeliveryOptimizationStatus | Where-Object { [string]$_.Status -match 'Download' }).Count) {
+        Info 'Windows Update or the Store is downloading right now, which lowers the measured speeds.'
+    }
+    $gw = Get-Gateway
+    $dest = '1.1.1.1'
+    $trace = @([NetTune.Probe]::Trace($dest, 12, 1000, 2))
+    $isp = ''
+    for ($i = 1; $i -lt $trace.Count; $i++) {
+        $a = [string]$trace[$i]
+        if ($a -and $a -ne $dest -and -not (Test-PrivateIP $a)) { $isp = $a; break }
+    }
+    $targets = @()
+    if ($gw) { $targets += (New-Target 'router' $gw 200) }
+    if ($isp) { $targets += (New-Target 'isp' $isp 200) }
+    $targets += (New-Target 'net' $dest 200)
+    $inet = Get-InternetAdapter
+    $nic = if ($inet) { [string]$inet.InterfaceGuid } else { '' }
+    $wifi = $inet -and (Test-Wifi $inet)
+    $limit = @(Get-NetQosPolicy -PolicyStore localhost | Where-Object { [string]$_.Name -eq 'NetTuneLimit upload' })
+    if ($limit.Count) {
+        Info ('NetTune''s upload limit for this PC is on (' + (Format-Mbps ([double]$limit[0].ThrottleRateAction / 1e6)) + ' Mbps), so the upload speed below is that limit.')
+    }
+    [NetTune.Load]::Prepare()
+    $t0 = [NetTune.Probe]::ReadTotals($nic)
+    Say '  Measuring the idle latency...'
+    $idle = Invoke-Phase 'idle' $targets $nic 8000
+    Say '  Downloading at full speed...'
+    $down = Invoke-Phase 'down' $targets $nic 12000
+    Start-Sleep -Seconds 2
+    Say '  Uploading at full speed...'
+    $up = Invoke-Phase 'up' $targets $nic 12000
+    $t1 = [NetTune.Probe]::ReadTotals($nic)
+    Say ''
+    Say ('  {0,-14}{1,10}{2,10}{3,10}{4,13}' -f '', 'Router', 'ISP', 'Internet', 'Speed')
+    $cell = {
+        param($ph, $name)
+        $s = $ph.Stats[$name]
+        if (-not $s) { return '-' }
+        if ($ph.Mode -ne 'idle' -and ($null -eq $ph.Mbps -or $ph.Mbps -lt 0.5)) { return '-' }
+        if ($null -eq $s.Med) { return 'no reply' }
+        if ($ph.Mode -eq 'idle') { return ('{0:0} ms' -f $s.Med) }
+        $a = Get-Added $idle $ph $name
+        if ($null -eq $a) { return '-' }
+        '+{0:0} ms' -f $a
+    }
+    foreach ($ph in @($idle, $down, $up)) {
+        $label = @{ idle = 'Idle'; down = 'Downloading'; up = 'Uploading' }[$ph.Mode]
+        $speed = ''
+        if ($ph.Mode -ne 'idle') { $speed = if ($null -ne $ph.Mbps -and $ph.Mbps -ge 0.5) { (Format-Mbps $ph.Mbps) + ' Mbps' } else { 'failed' } }
+        Say (('  {0,-14}{1,10}{2,10}{3,10}{4,13}' -f $label, (& $cell $ph 'router'), (& $cell $ph 'isp'), (& $cell $ph 'net'), $speed).TrimEnd())
+    }
+    $ln = @()
+    foreach ($ph in @($idle, $down, $up)) {
+        $s = $ph.Stats['net']
+        if ($s -and $s.Sent) { $ln += ('{0} {1:0.0}%' -f @{ idle = 'idle'; down = 'downloading'; up = 'uploading' }[$ph.Mode], $s.Loss) }
+    }
+    if ($ln.Count) { Say ('  Packet loss to the internet server: ' + ($ln -join ', ')) }
+    Say ''
+    $sqm = @()
+    $bloat = @{}
+    foreach ($ph in @($down, $up)) {
+        $dir = if ($ph.Mode -eq 'down') { 'download' } else { 'upload' }
+        $verb = if ($ph.Mode -eq 'down') { 'downloading' } else { 'uploading' }
+        if ($null -eq $ph.Mbps -or $ph.Mbps -lt 0.5) {
+            Warn ('The ' + $dir + ' test could not load the line' + $(if ($ph.LastError) { ' (' + $ph.LastError + ')' }) + '.')
+            continue
+        }
+        if ($ph.Limited -gt 0) { Info ('The test server slowed the ' + $dir + ' test down; the speed shown may be below your line''s.') }
+        $ar = Get-Added $idle $ph 'router'
+        $ai = Get-Added $idle $ph 'isp'
+        $an = Get-Added $idle $ph 'net'
+        $far = @($ai, $an | Where-Object { $null -ne $_ })
+        $add = if ($far.Count) { ($far | Measure-Object -Maximum).Maximum } else { $ar }
+        if ($null -eq $add) { continue }
+        $bloat[$ph.Mode] = $add
+        $grade = Get-Grade $add
+        if ($add -ge 30 -and $null -ne $ar -and $ar -ge 15 -and $ar -ge $add / 2) {
+            Warn ('While ' + $verb + ', the delay builds up between this PC and the router: +{0:0} ms there, +{1:0} ms in total, grade {2}.' -f $ar, $add, $grade)
+            if ($wifi) { Info 'That is the Wi-Fi link queueing. Ethernet removes it; a stronger signal or a router with airtime fairness helps.' }
+            else { Info 'On Ethernet that points at the router itself: its processor cannot keep up, or its SQM rate is above what it can shape.' }
+        } elseif ($add -ge 30) {
+            Warn ('While ' + $verb + ', ' + $dir + 's queue up in the modem or at the ISP: +{0:0} ms, grade {1}. That is bufferbloat.' -f $add, $grade)
+            $sqm += $ph
+        } elseif ($add -ge 5) {
+            Ok ('While ' + $verb + ': +{0:0} ms, grade {1}. Little bufferbloat.' -f $add, $grade)
+        } else {
+            Ok ('While ' + $verb + ': +{0:0} ms, grade {1}. No bufferbloat.' -f $add, $grade)
+        }
+    }
+    if ($sqm.Count) {
+        Say ''
+        Say '  The fix for every device is SQM in your router: CAKE or fq_codel, in menus called Smart Queue,'
+        Say '  Bufferbloat control, Anti-Bufferbloat or Adaptive QoS. Start with these rates:'
+        foreach ($ph in @($down, $up)) {
+            if ($null -eq $ph.Mbps -or $ph.Mbps -lt 0.5) { continue }
+            $n = if ($ph.Mode -eq 'down') { 'Download' } else { 'Upload  ' }
+            if ($ph.Mode -eq 'up' -and $limit.Count) {
+                Say '      Upload    90% of your line''s upload speed: measure it with UPLOAD_LIMIT_MODE=off'
+                continue
+            }
+            # Download needs more headroom: the router can only slow remote
+            # senders down indirectly, so it shapes further below the line.
+            $f = if ($ph.Mode -eq 'down') { 0.85 } else { 0.9 }
+            Say ('      {0}  {1} Mbps   ({2:0}% of the {3} Mbps measured)' -f $n, (Format-Mbps ($f * $ph.Mbps)), (100 * $f), (Format-Mbps $ph.Mbps))
+        }
+        Say '  Then run "NetTune.bat test" again. While a direction still adds more than 30 ms, lower its rate'
+        Say '  in 5% steps; once both stay below, you can raise them in small steps. NetTune.md shows where'
+        Say '  SQM is in common routers and which overhead setting matches your line.'
+    }
+    $rxp = $t1.RxPackets - $t0.RxPackets
+    $drop = ($t1.RxDiscards - $t0.RxDiscards) + ($t1.RxErrors - $t0.RxErrors)
+    if ($rxp -gt 1000 -and $drop -ge 10 -and $drop / $rxp -ge 0.001) {
+        Warn ('The network adapter itself dropped or rejected {0} of {1} received packets during the test.' -f $drop, $rxp)
+        Info 'Damaged packets point at the cable or Wi-Fi signal; discarded ones at receive buffers that fill (step 1 raises them).'
+    }
+    $txp = $t1.TxPackets - $t0.TxPackets
+    $txd = ($t1.TxDiscards - $t0.TxDiscards) + ($t1.TxErrors - $t0.TxErrors)
+    if ($txp -gt 1000 -and $txd -ge 10 -and $txd / $txp -ge 0.001) {
+        Warn ('The network adapter could not send {0} of {1} packets during the test: check the driver and the cable.' -f $txd, $txp)
+    }
+    if ($null -ne $up.Mbps -and $up.Mbps -ge 0.5 -and $bloat.ContainsKey('up')) {
+        'NT_UPBLOAT=' + [int][Math]::Round($bloat['up'])
+        'NT_UPTXT=' + (Format-Mbps $up.Mbps)
+        if ($limit.Count) {
+            'NT_LIMACTIVE=1'
+            if ($bloat['up'] -ge 30) {
+                Warn ('Even with the upload limit, uploading adds that much delay. Set UPLOAD_LIMIT_MODE to a lower number of Mbps, such as ' + [int][Math]::Max(1, [Math]::Floor(0.8 * [double]$limit[0].ThrottleRateAction / 1e6)) + '.')
+            }
+        } else {
+            $pct = [Math]::Max(50, [Math]::Min(95, (Get-IntSetting 'UPLOAD_LIMIT_PERCENT' 85)))
+            $lim = [int]($up.Mbps * 1000 * $pct / 100)
+            'NT_LIMKBPS=' + $lim
+            'NT_LIMTXT=' + (Format-Mbps ($lim / 1000))
+        }
+    }
+}
+
+'shape' {
+    $kbps = Get-IntSetting 'NT_SHAPE_KBPS' -1
+    if ($kbps -lt 0) { Fail 'No upload rate was given, so nothing was changed.'; return }
+    if ($kbps -gt 0 -and $kbps -lt 500) { Fail 'A limit below 0.5 Mbps would leave the PC barely usable online, so nothing was changed.'; return }
+    if (-not (Get-Command New-NetQosPolicy)) { Fail 'Windows QoS policies cannot be set on this PC (the NetQos module is missing).'; return }
+    $old = @(Get-NetQosPolicy -PolicyStore localhost | Where-Object { [string]$_.Name -like 'NetTuneLimit *' })
+    foreach ($q in $old) { Remove-NetQosPolicy -Name $q.Name -PolicyStore localhost -Confirm:$false }
+    if ($kbps -le 0) {
+        if ($old.Count) { Ok 'Upload limit for this PC: removed.' } else { Ok 'No upload limit for this PC is set.' }
+        return
+    }
+    $nla = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\QoS'
+    if (-not (Test-Path -LiteralPath $nla)) { New-Item -Path $nla -Force | Out-Null }
+    Set-ItemProperty -LiteralPath $nla -Name 'Do not use NLA' -Value '1' -Type String
+    # One throttle for all traffic of this PC: -Default is the documented
+    # filter for "all traffic not matched by any other filter". Policies that
+    # name a program (the game policies of step 5) and the home-network
+    # policies below match first, so that traffic is not throttled.
+    $bps = [uint64]([double]$kbps * 1000)
+    try {
+        try {
+            New-NetQosPolicy -Name 'NetTuneLimit upload' -Default -ThrottleRateActionBitsPerSecond $bps -NetworkProfile All -PolicyStore localhost -ErrorAction Stop | Out-Null
+        } catch {
+            New-NetQosPolicy -Name 'NetTuneLimit upload' -IPProtocolMatchCondition Both -ThrottleRateActionBitsPerSecond $bps -NetworkProfile All -PolicyStore localhost -ErrorAction Stop | Out-Null
+        }
+        $n = 0
+        foreach ($p in @('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', 'fc00::/7', 'fe80::/10')) {
+            $n++
+            New-NetQosPolicy -Name ('NetTuneLimit LAN ' + $n) -IPDstPrefixMatchCondition $p -IPProtocolMatchCondition Both -DSCPAction 0 -NetworkProfile All -PolicyStore localhost -ErrorAction Stop | Out-Null
+        }
+    } catch {
+        Fail ('Could not set the upload limit: ' + $_.Exception.Message)
+        foreach ($q in @(Get-NetQosPolicy -PolicyStore localhost | Where-Object { [string]$_.Name -like 'NetTuneLimit *' })) { Remove-NetQosPolicy -Name $q.Name -PolicyStore localhost -Confirm:$false }
+        return
+    }
+    $mb = Format-Mbps ($kbps / 1000)
+    Ok ('Upload limit for this PC: ' + $mb + ' Mbps. The games in your lists and your home network are not limited.')
+    Info 'Big uploads now queue inside this PC, where game packets skip the queue, instead of in the modem.'
+    if ((Test-Metered) -or -not (Import-Probe)) { Info 'It takes full effect after the restart.'; return }
+    Say '  Checking the limit with a short upload...'
+    $inet = Get-InternetAdapter
+    $nic = if ($inet) { [string]$inet.InterfaceGuid } else { '' }
+    [NetTune.Load]::Prepare()
+    $targets = @(New-Target 'net' '1.1.1.1' 200)
+    $idle = Invoke-Phase 'idle' $targets $nic 4000
+    $up = Invoke-Phase 'up' $targets $nic 10000
+    if ($null -eq $up.Mbps -or $up.Mbps -lt 0.5) { Info 'The check could not upload. The limit takes full effect after the restart.'; return }
+    if ($up.Mbps -le $kbps / 1000 * 1.15) {
+        $a = Get-Added $idle $up 'net'
+        $was = if ($env:NT_UPBLOAT) { ' instead of ' + $env:NT_UPBLOAT + ' ms' } else { '' }
+        if ($null -ne $a) { Ok ('Checked: uploads ran at ' + (Format-Mbps $up.Mbps) + (' Mbps and added {0:0} ms to the ping' -f $a) + $was + '.') }
+        else { Ok ('Checked: uploads ran at ' + (Format-Mbps $up.Mbps) + ' Mbps.') }
+    } else {
+        Info ('Windows has not applied the limit yet: uploads still ran at ' + (Format-Mbps $up.Mbps) + ' Mbps. It applies after the restart;')
+        Info 'check it then with "NetTune.bat test".'
+    }
 }
 
 default { Fail ('Unknown step: ' + $env:NT_STEP) }
